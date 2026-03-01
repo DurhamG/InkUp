@@ -83,6 +83,9 @@ class RecognizedTextView @JvmOverloads constructor(
     /** Called when the user drags the gutter. Delta is positive = drag down. */
     var onGutterDrag: ((Float) -> Unit)? = null
 
+    /** Called when the user taps the "W" logo. */
+    var onLogoTap: (() -> Unit)? = null
+
     /** Status message shown in the gutter below the logo (e.g. "Loading model..."). */
     var statusMessage: String = ""
         set(value) {
@@ -97,6 +100,8 @@ class RecognizedTextView @JvmOverloads constructor(
     // Gutter drag state
     private var isGutterDragging = false
     private var gutterDragLastY = 0f
+    private var gutterDragStartY = 0f
+    private var gutterDragMoved = false
 
     fun setParagraphs(paragraphs: List<List<TextSegment>>) {
         rebuildLayouts(paragraphs)
@@ -196,18 +201,25 @@ class RecognizedTextView @JvmOverloads constructor(
             MotionEvent.ACTION_DOWN -> {
                 isGutterDragging = true
                 gutterDragLastY = event.y
+                gutterDragStartY = event.y
+                gutterDragMoved = false
                 return true
             }
             MotionEvent.ACTION_MOVE -> {
                 if (!isGutterDragging) return false
                 val dy = event.y - gutterDragLastY  // drag down = positive
                 gutterDragLastY = event.y
+                if (Math.abs(event.y - gutterDragStartY) > 20f) gutterDragMoved = true
                 onGutterDrag?.invoke(dy)
                 return true
             }
             MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
                 if (!isGutterDragging) return false
                 isGutterDragging = false
+                // Detect tap on the logo area (top of gutter, no significant drag)
+                if (!gutterDragMoved && gutterDragStartY < GUTTER_WIDTH * 1.2f) {
+                    onLogoTap?.invoke()
+                }
                 return true
             }
         }
@@ -224,7 +236,7 @@ class RecognizedTextView @JvmOverloads constructor(
 
         // Draw text content
         if (staticLayouts.isNotEmpty()) {
-            val baseY = (height - totalTextHeight - bottomPadding).coerceAtLeast(0f)
+            val baseY = height - totalTextHeight - bottomPadding
             val startY = baseY + textScrollOffset
 
             canvas.save()

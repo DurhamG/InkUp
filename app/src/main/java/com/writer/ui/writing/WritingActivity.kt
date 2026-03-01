@@ -1,6 +1,7 @@
 package com.writer.ui.writing
 
 import android.os.Bundle
+import android.util.Log
 import android.view.WindowInsets
 import android.view.WindowInsetsController
 import android.widget.LinearLayout
@@ -11,11 +12,17 @@ import androidx.lifecycle.lifecycleScope
 import com.writer.R
 import com.writer.model.DocumentModel
 import com.writer.recognition.HandwritingRecognizer
+import com.writer.storage.DocumentData
+import com.writer.storage.DocumentStorage
 import com.writer.view.HandwritingCanvasView
 import com.writer.view.RecognizedTextView
 import kotlinx.coroutines.launch
 
 class WritingActivity : AppCompatActivity() {
+
+    companion object {
+        private const val TAG = "WritingActivity"
+    }
 
     private lateinit var inkCanvas: HandwritingCanvasView
     private lateinit var recognizedTextView: RecognizedTextView
@@ -28,6 +35,9 @@ class WritingActivity : AppCompatActivity() {
     private var defaultTextHeight = 0
     private var defaultCanvasHeight = 0
     private var splitOffset = 0f
+
+    // Saved data loaded before coordinator is ready
+    private var pendingRestore: DocumentData? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -48,6 +58,15 @@ class WritingActivity : AppCompatActivity() {
         documentModel = DocumentModel()
         recognizer = HandwritingRecognizer()
 
+        // Load saved document data
+        pendingRestore = DocumentStorage.load(this)
+
+        // Tap "W" logo to save & close (temporary for testing persistence)
+        recognizedTextView.onLogoTap = {
+            saveDocument()
+            finish()
+        }
+
         // Capture default heights after initial layout, then wire up the gutter
         recognizedTextView.post {
             defaultTextHeight = recognizedTextView.height
@@ -62,6 +81,7 @@ class WritingActivity : AppCompatActivity() {
                 recognizer.initialize(documentModel.language)
                 recognizedTextView.statusMessage = ""
                 startCoordinator()
+                restoreSavedDocument()
             } catch (e: Exception) {
                 recognizedTextView.statusMessage = "Error"
                 Toast.makeText(
@@ -70,8 +90,25 @@ class WritingActivity : AppCompatActivity() {
                     Toast.LENGTH_LONG
                 ).show()
                 startCoordinatorWithoutRecognition()
+                restoreSavedDocument()
             }
         }
+    }
+
+    private fun restoreSavedDocument() {
+        val data = pendingRestore ?: return
+        pendingRestore = null
+
+        Log.i(TAG, "Restoring ${data.strokes.size} strokes, scroll=${data.scrollOffsetY}")
+
+        // Restore strokes to document model and canvas
+        documentModel.activeStrokes.addAll(data.strokes)
+        inkCanvas.loadStrokes(data.strokes)
+        inkCanvas.scrollOffsetY = data.scrollOffsetY
+        inkCanvas.drawToSurface()
+
+        // Restore coordinator state (text cache, hidden lines, etc.)
+        coordinator?.restoreState(data)
     }
 
     private fun setupTextGutter() {
@@ -114,6 +151,16 @@ class WritingActivity : AppCompatActivity() {
             val count = inkCanvas.getStrokeCount()
             recognizedTextView.statusMessage = "$count strokes"
         }
+    }
+
+    override fun onStop() {
+        super.onStop()
+        saveDocument()
+    }
+
+    private fun saveDocument() {
+        val state = coordinator?.getState() ?: return
+        DocumentStorage.save(this, state)
     }
 
     override fun onDestroy() {

@@ -6,6 +6,7 @@ import com.writer.model.InkStroke
 import com.writer.model.StrokePoint
 import com.writer.recognition.HandwritingRecognizer
 import com.writer.recognition.LineSegmenter
+import com.writer.storage.DocumentData
 import com.writer.view.HandwritingCanvasView
 import com.writer.view.RecognizedTextView
 import kotlinx.coroutines.CoroutineScope
@@ -656,6 +657,27 @@ class WritingCoordinator(
         }
 
         textView.textScrollOffset = offset
+    }
+
+    /** Return current state for persistence. */
+    fun getState(): DocumentData {
+        return DocumentData(
+            strokes = inkCanvas.getStrokes(),
+            scrollOffsetY = inkCanvas.scrollOffsetY,
+            lineTextCache = lineTextCache.toMap(),
+            everHiddenLines = everHiddenLines.toSet(),
+            highestLineIndex = highestLineIndex,
+            currentLineIndex = currentLineIndex
+        )
+    }
+
+    /** Restore state from persisted data. Call after start(). */
+    fun restoreState(data: DocumentData) {
+        lineTextCache.putAll(data.lineTextCache)
+        everHiddenLines.addAll(data.everHiddenLines)
+        highestLineIndex = data.highestLineIndex
+        currentLineIndex = data.currentLineIndex
+        displayHiddenLines()
     }
 
 }

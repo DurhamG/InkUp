@@ -430,6 +430,13 @@ class HandwritingCanvasView @JvmOverloads constructor(
         drawToSurface()
     }
 
+    /** Load strokes from saved data (for restoring persisted documents). */
+    fun loadStrokes(strokes: List<InkStroke>) {
+        completedStrokes.clear()
+        completedStrokes.addAll(strokes)
+        drawToSurface()
+    }
+
     fun getStrokes(): List<InkStroke> = completedStrokes.toList()
 
     fun getStrokeCount(): Int = completedStrokes.size
