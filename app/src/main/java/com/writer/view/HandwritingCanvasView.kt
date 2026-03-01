@@ -6,11 +6,14 @@ import android.graphics.Color
 import android.graphics.Paint
 import android.graphics.Path
 import android.graphics.Rect
+import android.graphics.Typeface
 import android.util.AttributeSet
 import android.util.Log
 import android.view.MotionEvent
 import android.view.SurfaceHolder
 import android.view.SurfaceView
+import com.writer.ui.writing.AnnotationStroke
+import com.writer.ui.writing.TextAnnotation
 import com.onyx.android.sdk.data.note.TouchPoint
 import com.onyx.android.sdk.pen.RawInputCallback
 import com.onyx.android.sdk.pen.TouchHelper
@@ -71,6 +74,23 @@ class HandwritingCanvasView @JvmOverloads constructor(
         strokeWidth = 1f
         style = Paint.Style.STROKE
     }
+
+    private val annotationPaint = Paint().apply {
+        style = Paint.Style.STROKE
+        isAntiAlias = false
+        strokeCap = Paint.Cap.ROUND
+        strokeJoin = Paint.Join.ROUND
+    }
+
+    private val annotationTextPaint = Paint().apply {
+        isAntiAlias = true
+        typeface = Typeface.DEFAULT_BOLD
+    }
+
+    /** When true, all pen input is blocked and annotations are rendered. */
+    var tutorialMode = false
+    var annotationStrokes: List<AnnotationStroke> = emptyList()
+    var textAnnotations: List<TextAnnotation> = emptyList()
 
     var onStrokeCompleted: ((InkStroke) -> Unit)? = null
     var onIdleTimeout: (() -> Unit)? = null
@@ -209,6 +229,9 @@ class HandwritingCanvasView @JvmOverloads constructor(
             return handleGutterTouch(event)
         }
 
+        // In tutorial mode, block all writing input but allow gutter (handled above)
+        if (tutorialMode) return false
+
         // If using Onyx SDK, pen input in the canvas area is handled by SDK callbacks
         if (useOnyxSdk) return true
 
@@ -277,7 +300,7 @@ class HandwritingCanvasView @JvmOverloads constructor(
                 isGutterDragging = false
                 scrollOffsetY = snapToLine(scrollOffsetY)
                 drawToSurface()
-                resumeRawDrawing()
+                if (!tutorialMode) resumeRawDrawing()
                 onManualScroll?.invoke()
                 return true
             }
@@ -348,6 +371,30 @@ class HandwritingCanvasView @JvmOverloads constructor(
         // Draw gutter (in screen space)
         canvas.drawRect(gutterLeft, 0f, width.toFloat(), height.toFloat(), gutterPaint)
         canvas.drawLine(gutterLeft, 0f, gutterLeft, height.toFloat(), gutterLinePaint)
+
+        // Draw tutorial annotations on top of everything (including gutter)
+        if (annotationStrokes.isNotEmpty() || textAnnotations.isNotEmpty()) {
+            canvas.save()
+            canvas.translate(0f, -scrollOffsetY)
+            for (annotation in annotationStrokes) {
+                if (annotation.points.size < 2) continue
+                val path = Path()
+                path.moveTo(annotation.points[0].x, annotation.points[0].y)
+                for (i in 1 until annotation.points.size) {
+                    path.lineTo(annotation.points[i].x, annotation.points[i].y)
+                }
+                annotationPaint.color = annotation.color
+                annotationPaint.strokeWidth = annotation.strokeWidth
+                canvas.drawPath(path, annotationPaint)
+            }
+            for (ta in textAnnotations) {
+                annotationTextPaint.color = ta.color
+                annotationTextPaint.textSize = ta.size
+                annotationTextPaint.textAlign = if (ta.centered) Paint.Align.CENTER else Paint.Align.LEFT
+                canvas.drawText(ta.text, ta.x, ta.y, annotationTextPaint)
+            }
+            canvas.restore()
+        }
     }
 
     private fun drawStroke(canvas: Canvas, stroke: InkStroke) {
@@ -440,6 +487,12 @@ class HandwritingCanvasView @JvmOverloads constructor(
     fun getStrokes(): List<InkStroke> = completedStrokes.toList()
 
     fun getStrokeCount(): Int = completedStrokes.size
+
+    fun clearAnnotations() {
+        tutorialMode = false
+        annotationStrokes = emptyList()
+        textAnnotations = emptyList()
+    }
 
     fun isUsingOnyxSdk(): Boolean = useOnyxSdk
 }

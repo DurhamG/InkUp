@@ -67,6 +67,43 @@ class RecognizedTextView @JvmOverloads constructor(
         textAlign = Paint.Align.CENTER
     }
 
+    private val closeButtonPaint = TextPaint().apply {
+        color = Color.BLACK
+        textSize = 42f
+        typeface = Typeface.DEFAULT_BOLD
+        isAntiAlias = true
+        textAlign = Paint.Align.CENTER
+    }
+
+    private val closeButtonBorderPaint = Paint().apply {
+        color = Color.BLACK
+        strokeWidth = 3f
+        style = Paint.Style.STROKE
+    }
+
+    private val tutorialAnnotationPaint = Paint().apply {
+        color = Color.rgb(50, 50, 200)
+        strokeWidth = 4f
+        style = Paint.Style.STROKE
+        isAntiAlias = true
+        strokeCap = Paint.Cap.ROUND
+    }
+
+    private val tutorialTextPaint = TextPaint().apply {
+        color = Color.rgb(50, 50, 200)
+        textSize = 34f
+        typeface = Typeface.DEFAULT_BOLD
+        isAntiAlias = true
+    }
+
+    /** When true, show tutorial annotations and close button. */
+    var tutorialMode = false
+
+    /** Called when the "Close Tutorial" button is tapped. */
+    var onCloseTutorialTap: (() -> Unit)? = null
+
+    private val closeButtonHeight = 110f
+
     private var staticLayouts: List<StaticLayout> = emptyList()
     var totalTextHeight = 0
         private set
@@ -188,6 +225,17 @@ class RecognizedTextView @JvmOverloads constructor(
             return handleGutterTouch(event)
         }
 
+        // Tutorial: close button tap at top of text area
+        if (tutorialMode && event.x < width - GUTTER_WIDTH && event.y < closeButtonHeight) {
+            if (event.action == MotionEvent.ACTION_DOWN) {
+                return true
+            }
+            if (event.action == MotionEvent.ACTION_UP) {
+                onCloseTutorialTap?.invoke()
+                return true
+            }
+        }
+
         // Stylus/mouse in gutter area → resize drag
         if (event.x >= width - GUTTER_WIDTH) {
             return handleGutterTouch(event)
@@ -254,13 +302,49 @@ class RecognizedTextView @JvmOverloads constructor(
         canvas.drawRect(gutterLeft, 0f, width.toFloat(), height.toFloat(), gutterPaint)
         canvas.drawLine(gutterLeft, 0f, gutterLeft, height.toFloat(), gutterLinePaint)
 
-        // Draw "W" logo centered in the top of the gutter
+        // Draw "W" logo in the top of the gutter
         val logoY = GUTTER_WIDTH * 0.7f
         canvas.drawText("W", gutterCenterX, logoY, logoPaint)
 
         // Draw status message below logo if present
         if (statusMessage.isNotEmpty()) {
             canvas.drawText(statusMessage, gutterCenterX, GUTTER_WIDTH + 32f, statusPaint)
+        }
+
+        if (tutorialMode) {
+            // "Close Tutorial" button centered at top of text area
+            val contentCenterX = (width - GUTTER_WIDTH) / 2f
+            val btnTextY = 52f
+            canvas.drawText("Close Tutorial", contentCenterX, btnTextY, closeButtonPaint)
+            val btnTextWidth = closeButtonPaint.measureText("Close Tutorial")
+            val padH = 24f
+            val padTop = 20f
+            val padBottom = 18f
+            canvas.drawRect(
+                contentCenterX - btnTextWidth / 2f - padH,
+                btnTextY - 40f - padTop,
+                contentCenterX + btnTextWidth / 2f + padH,
+                btnTextY + 12f + padBottom,
+                closeButtonBorderPaint
+            )
+
+            // Arrow pointing at "W" logo saying "Menu"
+            val menuArrowY = logoY - 20f
+            val menuArrowRight = gutterLeft - 10f
+            val menuArrowLeft = gutterLeft - 180f
+            canvas.drawLine(menuArrowLeft, menuArrowY, menuArrowRight, menuArrowY, tutorialAnnotationPaint)
+            canvas.drawLine(menuArrowRight - 20f, menuArrowY - 12f, menuArrowRight, menuArrowY, tutorialAnnotationPaint)
+            canvas.drawLine(menuArrowRight - 20f, menuArrowY + 12f, menuArrowRight, menuArrowY, tutorialAnnotationPaint)
+            canvas.drawText("Menu", menuArrowLeft - 110f, menuArrowY + 12f, tutorialTextPaint)
+
+            // "Drag gutter to resize" with arrow pointing right toward gutter
+            val resizeY = height - 60f
+            val resizeLeft = gutterLeft - 350f
+            val resizeRight = gutterLeft - 20f
+            canvas.drawLine(resizeLeft, resizeY, resizeRight, resizeY, tutorialAnnotationPaint)
+            canvas.drawLine(resizeRight - 20f, resizeY - 12f, resizeRight, resizeY, tutorialAnnotationPaint)
+            canvas.drawLine(resizeRight - 20f, resizeY + 12f, resizeRight, resizeY, tutorialAnnotationPaint)
+            canvas.drawText("Drag gutter to resize", resizeLeft, resizeY - 16f, tutorialTextPaint)
         }
     }
 }
