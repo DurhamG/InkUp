@@ -36,7 +36,7 @@ object TutorialContent {
 
     private val LINE_SPACING = HandwritingCanvasView.LINE_SPACING
     private val TOP_MARGIN = HandwritingCanvasView.TOP_MARGIN
-    private const val GUTTER_WIDTH = 144f
+    private val GUTTER_WIDTH = HandwritingCanvasView.GUTTER_WIDTH
 
     private val textPaint = Paint().apply {
         typeface = Typeface.create("cursive", Typeface.NORMAL)

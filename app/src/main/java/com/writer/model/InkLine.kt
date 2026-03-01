@@ -1,18 +1,11 @@
 package com.writer.model
 
 import android.graphics.RectF
-import java.util.UUID
 
 data class InkLine(
-    val lineId: String = UUID.randomUUID().toString(),
-    var paragraphId: String? = null,
-    var lineIndex: Int = 0,
     val strokes: MutableList<InkStroke> = mutableListOf(),
-    var recognizedText: String? = null,
-    var recognitionState: RecognitionState = RecognitionState.PENDING,
     var baselineY: Float = 0f,
-    var boundingBox: RectF = RectF(),
-    var isIndented: Boolean = false
+    var boundingBox: RectF = RectF()
 ) {
     fun computeBoundingBox(): RectF {
         if (strokes.isEmpty()) return RectF()

@@ -30,7 +30,7 @@ class RecognizedTextView @JvmOverloads constructor(
 ) : View(context, attrs, defStyleAttr) {
 
     companion object {
-        private const val GUTTER_WIDTH = 144f
+        private const val GUTTER_WIDTH = HandwritingCanvasView.GUTTER_WIDTH
     }
 
     private val textPaint = TextPaint().apply {

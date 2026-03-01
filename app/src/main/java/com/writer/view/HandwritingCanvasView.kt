@@ -42,7 +42,7 @@ class HandwritingCanvasView @JvmOverloads constructor(
         // Top margin before the first line
         const val TOP_MARGIN = 40f
         // Width of the scroll gutter on the right edge
-        private const val GUTTER_WIDTH = 144f
+        const val GUTTER_WIDTH = 144f
     }
 
     private val completedStrokes = mutableListOf<InkStroke>()
