@@ -26,6 +26,8 @@ class WritingActivity : AppCompatActivity() {
 
     companion object {
         private const val TAG = "WritingActivity"
+        private const val PREFS_NAME = "writer_prefs"
+        private const val KEY_TUTORIAL_SEEN = "tutorial_seen"
     }
 
     private lateinit var inkCanvas: HandwritingCanvasView
@@ -68,8 +70,9 @@ class WritingActivity : AppCompatActivity() {
         documentModel = DocumentModel()
         recognizer = HandwritingRecognizer()
 
-        // Load saved document data
+        // Load saved document data and restore strokes immediately (no recognizer needed)
         pendingRestore = DocumentStorage.load(this)
+        restoreDocumentVisuals()
 
         // Tap "W" logo to open menu
         recognizedTextView.onLogoTap = { showMenu() }
@@ -79,6 +82,13 @@ class WritingActivity : AppCompatActivity() {
             defaultTextHeight = recognizedTextView.height
             defaultCanvasHeight = inkCanvas.height
             setupTextGutter()
+
+            // Show tutorial on first launch
+            val prefs = getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
+            if (!prefs.getBoolean(KEY_TUTORIAL_SEEN, false)) {
+                inkCanvas.pauseRawDrawing()
+                showTutorial()
+            }
         }
 
         // Initialize recognizer then start the coordinator
@@ -88,7 +98,7 @@ class WritingActivity : AppCompatActivity() {
                 recognizer.initialize(documentModel.language)
                 recognizedTextView.statusMessage = ""
                 startCoordinator()
-                restoreSavedDocument()
+                restoreCoordinatorState()
             } catch (e: Exception) {
                 recognizedTextView.statusMessage = "Error"
                 Toast.makeText(
@@ -97,24 +107,28 @@ class WritingActivity : AppCompatActivity() {
                     Toast.LENGTH_LONG
                 ).show()
                 startCoordinatorWithoutRecognition()
-                restoreSavedDocument()
             }
         }
     }
 
-    private fun restoreSavedDocument() {
+    /** Restore strokes and scroll to canvas immediately — no recognizer needed. */
+    private fun restoreDocumentVisuals() {
         val data = pendingRestore ?: return
-        pendingRestore = null
 
         Log.i(TAG, "Restoring ${data.strokes.size} strokes, scroll=${data.scrollOffsetY}")
 
-        // Restore strokes to document model and canvas
         documentModel.activeStrokes.addAll(data.strokes)
         inkCanvas.loadStrokes(data.strokes)
         inkCanvas.scrollOffsetY = data.scrollOffsetY
         inkCanvas.drawToSurface()
+    }
 
-        // Restore coordinator state (text cache, hidden lines, etc.)
+    /** Restore coordinator state (text cache, hidden lines) after recognizer is ready. */
+    private fun restoreCoordinatorState() {
+        if (inTutorialMode) return // defer until tutorial closes
+        val data = pendingRestore ?: return
+        pendingRestore = null
+
         coordinator?.restoreState(data)
     }
 
@@ -194,6 +208,12 @@ class WritingActivity : AppCompatActivity() {
             saveDocument()
             finish()
         }
+        popupView.findViewById<android.view.View>(R.id.menuDebugReset).setOnClickListener {
+            popup.dismiss()
+            getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
+                .edit().putBoolean(KEY_TUTORIAL_SEEN, false).apply()
+            Toast.makeText(this, "Tutorial reset — will show on next launch", Toast.LENGTH_SHORT).show()
+        }
 
         // Position to the left of the gutter, at the top of the text view
         val gutterWidth = 144 // matches GUTTER_WIDTH in RecognizedTextView
@@ -237,6 +257,10 @@ class WritingActivity : AppCompatActivity() {
     }
 
     private fun closeTutorial() {
+        // Mark tutorial as seen
+        getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
+            .edit().putBoolean(KEY_TUTORIAL_SEEN, true).apply()
+
         // Clear tutorial annotations
         inkCanvas.clearAnnotations()
 
@@ -255,7 +279,14 @@ class WritingActivity : AppCompatActivity() {
         // Reset and restart coordinator (restoreState will set correct paragraphs)
         coordinator?.reset()
         coordinator?.start()
-        savedTutorialState?.let { coordinator?.restoreState(it) }
+        if (savedTutorialState != null) {
+            coordinator?.restoreState(savedTutorialState!!)
+        } else if (pendingRestore != null) {
+            // Tutorial auto-showed before coordinator finished loading — restore now
+            val data = pendingRestore!!
+            pendingRestore = null
+            coordinator?.restoreState(data)
+        }
 
         recognizedTextView.invalidate()
 
