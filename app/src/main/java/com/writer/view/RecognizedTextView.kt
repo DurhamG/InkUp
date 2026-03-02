@@ -370,7 +370,7 @@ class RecognizedTextView @JvmOverloads constructor(
         var cumulativeY = startY
         for (pIdx in staticLayouts.indices) {
             val layout = staticLayouts[pIdx]
-            val pEnd = cumulativeY + layout.height + paragraphSpacing
+            val pEnd = cumulativeY + paragraphHeights.getOrElse(pIdx) { layout.height + paragraphSpacing }
 
             if (y >= cumulativeY && y < pEnd) {
                 val localY = (y - cumulativeY).toInt()
@@ -411,9 +411,9 @@ class RecognizedTextView @JvmOverloads constructor(
             canvas.save()
             canvas.translate(horizontalPadding, startY)
 
-            for (layout in staticLayouts) {
+            for ((i, layout) in staticLayouts.withIndex()) {
                 layout.draw(canvas)
-                canvas.translate(0f, layout.height + paragraphSpacing)
+                canvas.translate(0f, paragraphHeights.getOrElse(i) { layout.height + paragraphSpacing })
             }
 
             canvas.restore()
