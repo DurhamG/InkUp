@@ -131,7 +131,7 @@ class WritingActivity : AppCompatActivity() {
         pendingRestore = DocumentStorage.load(this, currentDocumentName)
         restoreDocumentVisuals()
 
-        // Tap "W" logo to open menu
+        // Tap "I" logo to open menu
         recognizedTextView.onLogoTap = { showMenu() }
 
         // Create coordinator early so cached text can be displayed before model loads

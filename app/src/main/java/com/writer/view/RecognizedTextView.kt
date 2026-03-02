@@ -24,7 +24,7 @@ import com.writer.ui.writing.WritingCoordinator.TextSegment
  * Individual line segments within a paragraph can be dimmed independently
  * using colored spans.
  *
- * Includes a right-side gutter with a "W" logo and resize drag handling.
+ * Includes a right-side gutter with a "I" logo and resize drag handling.
  */
 class RecognizedTextView @JvmOverloads constructor(
     context: Context,
@@ -124,7 +124,7 @@ class RecognizedTextView @JvmOverloads constructor(
     /** Called when the user drags the gutter. Delta is positive = drag down. */
     var onGutterDrag: ((Float) -> Unit)? = null
 
-    /** Called when the user taps the "W" logo. */
+    /** Called when the user taps the "I" logo. */
     var onLogoTap: (() -> Unit)? = null
 
     /** Called when the user taps on a text segment. Passes the written lineIndex. */
@@ -447,9 +447,9 @@ class RecognizedTextView @JvmOverloads constructor(
         canvas.drawRect(gutterLeft, 0f, width.toFloat(), height.toFloat(), gutterPaint)
         canvas.drawLine(gutterLeft, 0f, gutterLeft, height.toFloat(), gutterLinePaint)
 
-        // Draw "W" logo in the top of the gutter
+        // Draw "I" logo in the top of the gutter
         val logoY = GUTTER_WIDTH * 0.7f
-        canvas.drawText("W", gutterCenterX, logoY, logoPaint)
+        canvas.drawText("I", gutterCenterX, logoY, logoPaint)
 
         // Draw status message below logo if present
         if (statusMessage.isNotEmpty()) {
@@ -473,7 +473,7 @@ class RecognizedTextView @JvmOverloads constructor(
                 closeButtonBorderPaint
             )
 
-            // Arrow pointing at "W" logo saying "Menu"
+            // Arrow pointing at "I" logo saying "Menu"
             val menuArrowY = logoY - 20f
             val menuArrowRight = gutterLeft - 10f
             val menuArrowLeft = gutterLeft - 180f

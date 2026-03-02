@@ -1,0 +1,124 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>InkUp - Handwriting for E-Ink</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+
+        body {
+            font-family: Georgia, 'Times New Roman', serif;
+            color: #222;
+            background: #fafaf8;
+        }
+
+        .hero {
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 60px 24px 40px;
+            text-align: center;
+        }
+
+        h1 {
+            font-size: 3rem;
+            font-weight: normal;
+            letter-spacing: -0.02em;
+            margin-bottom: 16px;
+        }
+
+        .tagline {
+            font-size: 1.25rem;
+            color: #555;
+            margin-bottom: 48px;
+            line-height: 1.6;
+        }
+
+        .screenshot-container {
+            max-width: 480px;
+            margin: 0 auto 48px;
+        }
+
+        .screenshot-container img {
+            width: 100%;
+            border: 1px solid #ddd;
+            border-radius: 8px;
+            box-shadow: 0 4px 24px rgba(0, 0, 0, 0.08);
+        }
+
+        .features {
+            max-width: 640px;
+            margin: 0 auto;
+            padding: 0 24px 60px;
+            text-align: left;
+        }
+
+        .features h2 {
+            font-size: 1.5rem;
+            font-weight: normal;
+            margin-bottom: 24px;
+            text-align: center;
+        }
+
+        .features ul {
+            list-style: none;
+            padding: 0;
+        }
+
+        .features li {
+            padding: 12px 0;
+            border-bottom: 1px solid #eee;
+            font-size: 1.05rem;
+            line-height: 1.5;
+        }
+
+        .features li:last-child {
+            border-bottom: none;
+        }
+
+        .features li strong {
+            font-weight: 600;
+        }
+
+        footer {
+            text-align: center;
+            padding: 24px;
+            color: #999;
+            font-size: 0.9rem;
+        }
+
+        footer a {
+            color: #666;
+        }
+    </style>
+</head>
+<body>
+    <div class="hero">
+        <h1>InkUp</h1>
+        <p class="tagline">
+            A handwriting app for e-ink tablets.<br>
+            Write naturally. See clean text appear as you go.
+        </p>
+        <div class="screenshot-container">
+            <img src="screenshot.png" alt="InkUp app showing handwritten text with recognized text above">
+        </div>
+    </div>
+
+    <div class="features">
+        <h2>How it works</h2>
+        <ul>
+            <li><strong>Just write.</strong> Your handwriting is recognized in real time and rendered as formatted text.</li>
+            <li><strong>Strike through</strong> words to delete them. Draw an <strong>X</strong> to remove an entire line.</li>
+            <li><strong>Draw a vertical line</strong> to insert a blank line above or below.</li>
+            <li><strong>Underline</strong> a word to make it a heading.</li>
+            <li><strong>Draw a dash</strong> before your text to create a bulleted list item.</li>
+            <li><strong>Auto-scroll</strong> kicks in as you write toward the bottom.</li>
+            <li><strong>Export as markdown</strong> to share your notes anywhere.</li>
+        </ul>
+    </div>
+
+    <footer>
+        <a href="https://github.com/durham-goode/writer">View on GitHub</a>
+    </footer>
+</body>
+</html>
