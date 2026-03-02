@@ -4,11 +4,35 @@
     android:height="108dp"
     android:viewportWidth="108"
     android:viewportHeight="108">
-    <!-- Simple pen icon -->
+
+    <!-- Cursive "i" — entry swoop from lower-left, downstroke, exit swoop to lower-right -->
     <path
-        android:fillColor="#000000"
-        android:pathData="M54,24 L42,84 L54,78 L66,84 Z" />
+        android:fillColor="#222222"
+        android:pathData="M32,52 Q36,48 40,44 Q43,41 46,41 Q48,41 48,44 Q48,48 47,53 Q46,58 45,63 Q44,66 46,68 Q48,69 52,68 Q56,66 60,63 L58,61 Q55,63 52,65 Q50,66 48,65 Q47,64 47,62 Q48,58 49,53 Q50,48 50,44 Q50,40 47,39 Q44,39 41,42 Q38,44 34,50 Z" />
+
+    <!-- Cursive "i" dot -->
     <path
-        android:fillColor="#000000"
-        android:pathData="M50,22 L58,22 L56,30 L52,30 Z" />
+        android:fillColor="#222222"
+        android:pathData="M46,32 A2.5,2.5 0 1,1 51,32 A2.5,2.5 0 1,1 46,32 Z" />
+
+    <!-- Pen nib body — angled ~45 degrees, small gap from end of "i" swoop -->
+    <path
+        android:fillColor="#222222"
+        android:pathData="M78,44 L83,49 L66,63 L61,58 Z" />
+
+    <!-- Pen nib tip — pointed, near but not touching the ink -->
+    <path
+        android:fillColor="#222222"
+        android:pathData="M61,58 L66,63 L62,65 Z" />
+
+    <!-- Nib slit -->
+    <path
+        android:strokeColor="#FFFFFF"
+        android:strokeWidth="1"
+        android:pathData="M74,48 L65,60" />
+
+    <!-- Pen barrel -->
+    <path
+        android:fillColor="#333333"
+        android:pathData="M78,44 L83,49 L90,42 L85,37 Z" />
 </vector>
