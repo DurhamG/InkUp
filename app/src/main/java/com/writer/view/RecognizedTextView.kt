@@ -11,6 +11,8 @@ import android.text.StaticLayout
 import android.text.TextPaint
 import android.text.style.ForegroundColorSpan
 import android.text.style.LeadingMarginSpan
+import android.text.style.RelativeSizeSpan
+import android.text.style.StyleSpan
 import android.util.AttributeSet
 import android.view.MotionEvent
 import android.view.View
@@ -142,6 +144,7 @@ class RecognizedTextView @JvmOverloads constructor(
     private val listBaseIndent = 60
     private val bulletHangIndent = 100
     private val bulletPrefix = "\u2022  "
+    private val headingSpacingAfter = 12f
     private val bottomPadding = 10f
 
     // Gutter drag state
@@ -176,6 +179,7 @@ class RecognizedTextView @JvmOverloads constructor(
 
         staticLayouts = paragraphs.mapIndexed { pIdx, segments ->
             val isListItem = segments.firstOrNull()?.listItem == true
+            val isHeading = segments.firstOrNull()?.heading == true
             val spannable = SpannableStringBuilder()
             val segmentStarts = mutableListOf<Int>()
 
@@ -198,7 +202,19 @@ class RecognizedTextView @JvmOverloads constructor(
                 }
             }
 
-            if (isListItem) {
+            if (isHeading) {
+                // Heading: larger bold text, no indent
+                spannable.setSpan(
+                    RelativeSizeSpan(1.3f),
+                    0, spannable.length,
+                    SpannableStringBuilder.SPAN_EXCLUSIVE_EXCLUSIVE
+                )
+                spannable.setSpan(
+                    StyleSpan(Typeface.BOLD),
+                    0, spannable.length,
+                    SpannableStringBuilder.SPAN_EXCLUSIVE_EXCLUSIVE
+                )
+            } else if (isListItem) {
                 // Hanging indent: all lines indented, bullet hangs in the margin
                 spannable.setSpan(
                     LeadingMarginSpan.Standard(listBaseIndent, bulletHangIndent),
@@ -219,9 +235,13 @@ class RecognizedTextView @JvmOverloads constructor(
                 .setLineSpacing(8f, 1f)
                 .build()
 
-            // Determine spacing: use tight spacing between consecutive list items
+            // Determine spacing after this paragraph
             val nextIsListItem = paragraphs.getOrNull(pIdx + 1)?.firstOrNull()?.listItem == true
-            val spacing = if (isListItem && nextIsListItem) listItemSpacing else paragraphSpacing
+            val spacing = when {
+                isHeading -> headingSpacingAfter
+                isListItem && nextIsListItem -> listItemSpacing
+                else -> paragraphSpacing
+            }
 
             // Attribute each rendered line to the segment whose text starts it.
             val segHeights = FloatArray(segments.size)

@@ -360,7 +360,7 @@ class WritingCoordinator(
     }
 
     /** A segment of text within a paragraph, with its own dimming state. */
-    data class TextSegment(val text: String, val dimmed: Boolean, val lineIndex: Int, val listItem: Boolean = false)
+    data class TextSegment(val text: String, val dimmed: Boolean, val lineIndex: Int, val listItem: Boolean = false, val heading: Boolean = false)
 
     private fun updateTextView(currentlyHidden: Set<Int>) {
         val strokesByLine = lineSegmenter.groupByLine(documentModel.activeStrokes)
@@ -377,16 +377,20 @@ class WritingCoordinator(
 
             val lineStrokes = strokesByLine[lineIdx]
             val isList = lineStrokes != null && findListMarkerStrokeId(lineStrokes, writingWidth) != null
+            val isHeading = lineStrokes != null && findUnderlineStrokeId(lineStrokes, lineIdx) != null
 
             if (lineStrokes != null && lineStrokes.isNotEmpty() && currentSegments.isNotEmpty()) {
                 val leftmostX = lineStrokes.minOf { stroke -> stroke.points.minOf { it.x } }
                 val prevWasList = currentSegments.any { it.listItem }
+                val prevWasHeading = currentSegments.any { it.heading }
                 val isIndented = leftmostX > writingWidth * INDENT_THRESHOLD
                 // Break paragraph on:
                 // - indent (unless continuing a list item)
                 // - new list item
                 // - non-indented line after a list item (back to normal text)
-                val shouldBreak = isList ||
+                // - heading (always its own paragraph)
+                // - line after a heading
+                val shouldBreak = isList || isHeading || prevWasHeading ||
                     (isIndented && !prevWasList) ||
                     (prevWasList && !isIndented && !isList)
                 if (shouldBreak) {
@@ -395,7 +399,7 @@ class WritingCoordinator(
                 }
             }
 
-            currentSegments.add(TextSegment(text, dimmed = lineIdx !in currentlyHidden, lineIndex = lineIdx, listItem = isList))
+            currentSegments.add(TextSegment(text, dimmed = lineIdx !in currentlyHidden, lineIndex = lineIdx, listItem = isList, heading = isHeading))
         }
 
         if (currentSegments.isNotEmpty()) {
@@ -449,12 +453,73 @@ class WritingCoordinator(
     }
 
     /**
-     * Filter out the list marker stroke from a set of strokes before recognition.
+     * Find an underline stroke on a line, if present: a long horizontal stroke
+     * near the bottom of the line that spans at least 80% of the text width.
+     * The underline is always assigned to the line where it starts, even if
+     * it wiggles into the line below.
+     * Returns the underline stroke ID, or null if no underline found.
+     */
+    private fun findUnderlineStrokeId(strokes: List<InkStroke>, lineIndex: Int): String? {
+        if (strokes.size < 2) return null
+
+        val lineTop = lineSegmenter.getLineY(lineIndex)
+        val lineBottom = lineTop + HandwritingCanvasView.LINE_SPACING
+
+        // Find the bounding box of all non-underline-candidate strokes (the text)
+        // First pass: find strokes that could be text vs underline candidates
+        for (stroke in strokes) {
+            val minY = stroke.points.minOf { it.y }
+            val maxY = stroke.points.maxOf { it.y }
+            val minX = stroke.points.minOf { it.x }
+            val maxX = stroke.points.maxOf { it.x }
+            val strokeWidth = maxX - minX
+            val strokeHeight = maxY - minY
+
+            // Underline candidate: horizontal, near bottom of line, flat
+            if (strokeHeight > strokeWidth * 0.3f) continue  // not flat enough
+            if (strokeWidth < 100f) continue  // too short to be an underline
+            if (minY < lineTop + HandwritingCanvasView.LINE_SPACING * 0.5f) continue  // too high up
+
+            // Check path simplicity (same as list marker check)
+            val pathLength = stroke.points.zipWithNext { a, b ->
+                val dx = b.x - a.x; val dy = b.y - a.y
+                kotlin.math.sqrt(dx * dx + dy * dy)
+            }.sum()
+            val diagonal = kotlin.math.sqrt(strokeWidth * strokeWidth + strokeHeight * strokeHeight)
+            if (pathLength > diagonal * 2f) continue  // too complex
+
+            // Now check that it spans at least 80% of the text on this line
+            val textStrokes = strokes.filter { it.strokeId != stroke.strokeId }
+            if (textStrokes.isEmpty()) continue
+            val textMinX = textStrokes.minOf { s -> s.points.minOf { it.x } }
+            val textMaxX = textStrokes.maxOf { s -> s.points.maxOf { it.x } }
+            val textWidth = textMaxX - textMinX
+            if (textWidth <= 0f) continue
+
+            if (strokeWidth >= textWidth * 0.8f) {
+                return stroke.strokeId
+            }
+        }
+
+        return null
+    }
+
+    /**
+     * Filter out the list marker and underline strokes before recognition.
      */
     private fun filterMarkerStroke(strokes: List<InkStroke>): List<InkStroke> {
         val writingWidth = inkCanvas.width - GUTTER_WIDTH
-        val markerId = findListMarkerStrokeId(strokes, writingWidth) ?: return strokes
-        return strokes.filter { it.strokeId != markerId }
+        val excludeIds = mutableSetOf<String>()
+
+        val markerId = findListMarkerStrokeId(strokes, writingWidth)
+        if (markerId != null) excludeIds.add(markerId)
+
+        // Need to determine line index from strokes for underline detection
+        val lineIndex = lineSegmenter.getStrokeLineIndex(strokes.first())
+        val underlineId = findUnderlineStrokeId(strokes, lineIndex)
+        if (underlineId != null) excludeIds.add(underlineId)
+
+        return if (excludeIds.isEmpty()) strokes else strokes.filter { it.strokeId !in excludeIds }
     }
 
     private fun updateTextScrollOffset() {
@@ -510,6 +575,7 @@ class WritingCoordinator(
         val paragraphs = mutableListOf<String>()
         var currentLines = mutableListOf<String>()
         var currentIsList = false
+        var currentIsHeading = false
 
         for (lineIdx in sortedLines) {
             val text = lineTextCache[lineIdx]
@@ -517,29 +583,33 @@ class WritingCoordinator(
 
             val lineStrokes = strokesByLine[lineIdx]
             val isList = lineStrokes != null && findListMarkerStrokeId(lineStrokes, writingWidth) != null
+            val isHeading = lineStrokes != null && findUnderlineStrokeId(lineStrokes, lineIdx) != null
 
             if (lineStrokes != null && lineStrokes.isNotEmpty() && currentLines.isNotEmpty()) {
                 val leftmostX = lineStrokes.minOf { stroke -> stroke.points.minOf { it.x } }
                 val isIndented = leftmostX > writingWidth * INDENT_THRESHOLD
-                val shouldBreak = isList ||
+                val shouldBreak = isList || isHeading || currentIsHeading ||
                     (isIndented && !currentIsList) ||
                     (currentIsList && !isIndented && !isList)
                 if (shouldBreak) {
                     val joined = currentLines.joinToString(" ")
-                    paragraphs.add(if (currentIsList) "- $joined" else joined)
+                    val prefix = if (currentIsHeading) "## " else if (currentIsList) "- " else ""
+                    paragraphs.add("$prefix$joined")
                     currentLines = mutableListOf()
                 }
             }
 
             if (currentLines.isEmpty()) {
                 currentIsList = isList
+                currentIsHeading = isHeading
             }
             currentLines.add(text)
         }
 
         if (currentLines.isNotEmpty()) {
             val joined = currentLines.joinToString(" ")
-            paragraphs.add(if (currentIsList) "- $joined" else joined)
+            val prefix = if (currentIsHeading) "## " else if (currentIsList) "- " else ""
+            paragraphs.add("$prefix$joined")
         }
 
         return paragraphs.joinToString("\n\n")

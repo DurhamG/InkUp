@@ -62,6 +62,48 @@ class GestureHandler(
         val endLineIdx = lineSegmenter.getLineIndex(stroke.points.last().y)
         if (startLineIdx != endLineIdx) return false
 
+        // Don't treat heading underlines as strikethroughs
+        if (isHeadingUnderline(stroke, startLineIdx)) return false
+
+        return true
+    }
+
+    /**
+     * Check if a horizontal stroke is a heading underline rather than a strikethrough.
+     * A heading underline starts in the bottom 20% of the line and spans at least 80%
+     * of the existing text width on that line.
+     */
+    private fun isHeadingUnderline(stroke: InkStroke, lineIdx: Int): Boolean {
+        val lineTop = lineSegmenter.getLineY(lineIdx)
+        val lineSpacing = HandwritingCanvasView.LINE_SPACING
+
+        // Stroke must start in the bottom 20% of the line
+        val startY = stroke.points.first().y
+        if (startY < lineTop + lineSpacing * 0.8f) return false
+
+        // Must have existing text on this line
+        val lineStrokes = lineSegmenter.getStrokesForLine(documentModel.activeStrokes, lineIdx)
+        if (lineStrokes.isEmpty()) return false
+
+        // Measure text width from existing strokes
+        val textMinX = lineStrokes.minOf { s -> s.points.minOf { it.x } }
+        val textMaxX = lineStrokes.maxOf { s -> s.points.maxOf { it.x } }
+        val textWidth = textMaxX - textMinX
+        if (textWidth <= 0f) return false
+
+        // Underline must span at least 80% of text width
+        val strokeWidth = stroke.points.maxOf { it.x } - stroke.points.minOf { it.x }
+        if (strokeWidth < textWidth * 0.8f) return false
+
+        // Path simplicity check — reject complex strokes
+        val strokeHeight = stroke.points.maxOf { it.y } - stroke.points.minOf { it.y }
+        val pathLength = stroke.points.zipWithNext { a, b ->
+            val dx = b.x - a.x; val dy = b.y - a.y
+            kotlin.math.sqrt(dx * dx + dy * dy)
+        }.sum()
+        val diagonal = kotlin.math.sqrt(strokeWidth * strokeWidth + strokeHeight * strokeHeight)
+        if (pathLength > diagonal * 2f) return false
+
         return true
     }
 
