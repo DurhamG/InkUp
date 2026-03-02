@@ -126,9 +126,14 @@ class WritingCoordinator(
 
         scope.launch {
             try {
-                val strokes = lineSegmenter.getStrokesForLine(
+                val allStrokes = lineSegmenter.getStrokesForLine(
                     documentModel.activeStrokes, lineIndex
                 )
+                if (allStrokes.isEmpty()) {
+                    recognizingLines.remove(lineIndex)
+                    return@launch
+                }
+                val strokes = filterMarkerStroke(allStrokes)
                 if (strokes.isEmpty()) {
                     recognizingLines.remove(lineIndex)
                     return@launch
@@ -166,9 +171,14 @@ class WritingCoordinator(
 
         scope.launch {
             try {
-                val strokes = lineSegmenter.getStrokesForLine(
+                val allStrokes = lineSegmenter.getStrokesForLine(
                     documentModel.activeStrokes, lineIndex
                 )
+                if (allStrokes.isEmpty()) {
+                    recognizingLines.remove(lineIndex)
+                    return@launch
+                }
+                val strokes = filterMarkerStroke(allStrokes)
                 if (strokes.isEmpty()) {
                     recognizingLines.remove(lineIndex)
                     return@launch
@@ -323,7 +333,9 @@ class WritingCoordinator(
                 for (lineIdx in uncached) {
                     if (lineTextCache.containsKey(lineIdx)) continue
                     try {
-                        val strokes = strokesByLine[lineIdx] ?: continue
+                        val allStrokes = strokesByLine[lineIdx] ?: continue
+                        val strokes = filterMarkerStroke(allStrokes)
+                        if (strokes.isEmpty()) continue
                         val line = lineSegmenter.buildInkLine(strokes, lineIdx)
                         val preContext = buildPreContext(lineIdx)
                         val text = withContext(Dispatchers.IO) {
@@ -348,7 +360,7 @@ class WritingCoordinator(
     }
 
     /** A segment of text within a paragraph, with its own dimming state. */
-    data class TextSegment(val text: String, val dimmed: Boolean, val lineIndex: Int)
+    data class TextSegment(val text: String, val dimmed: Boolean, val lineIndex: Int, val listItem: Boolean = false)
 
     private fun updateTextView(currentlyHidden: Set<Int>) {
         val strokesByLine = lineSegmenter.groupByLine(documentModel.activeStrokes)
@@ -364,15 +376,26 @@ class WritingCoordinator(
             if (text.isNullOrEmpty() || text == "[?]") continue
 
             val lineStrokes = strokesByLine[lineIdx]
+            val isList = lineStrokes != null && findListMarkerStrokeId(lineStrokes, writingWidth) != null
+
             if (lineStrokes != null && lineStrokes.isNotEmpty() && currentSegments.isNotEmpty()) {
                 val leftmostX = lineStrokes.minOf { stroke -> stroke.points.minOf { it.x } }
-                if (leftmostX > writingWidth * INDENT_THRESHOLD) {
+                val prevWasList = currentSegments.any { it.listItem }
+                val isIndented = leftmostX > writingWidth * INDENT_THRESHOLD
+                // Break paragraph on:
+                // - indent (unless continuing a list item)
+                // - new list item
+                // - non-indented line after a list item (back to normal text)
+                val shouldBreak = isList ||
+                    (isIndented && !prevWasList) ||
+                    (prevWasList && !isIndented && !isList)
+                if (shouldBreak) {
                     paragraphs.add(currentSegments)
                     currentSegments = mutableListOf()
                 }
             }
 
-            currentSegments.add(TextSegment(text, dimmed = lineIdx !in currentlyHidden, lineIndex = lineIdx))
+            currentSegments.add(TextSegment(text, dimmed = lineIdx !in currentlyHidden, lineIndex = lineIdx, listItem = isList))
         }
 
         if (currentSegments.isNotEmpty()) {
@@ -380,6 +403,58 @@ class WritingCoordinator(
         }
 
         textView.setParagraphs(paragraphs)
+    }
+
+    /**
+     * Find the list marker stroke on a line, if present: a short, flat horizontal
+     * stroke on the far left, separated from the main text by a gap.
+     * Returns the marker stroke ID, or null if no marker found.
+     */
+    private fun findListMarkerStrokeId(strokes: List<InkStroke>, writingWidth: Float): String? {
+        if (strokes.size < 2) return null
+
+        // Sort strokes by their leftmost x position
+        val sorted = strokes.sortedBy { stroke -> stroke.points.minOf { it.x } }
+        val first = sorted[0]
+
+        val firstMinX = first.points.minOf { it.x }
+        val firstMaxX = first.points.maxOf { it.x }
+        val firstMinY = first.points.minOf { it.y }
+        val firstMaxY = first.points.maxOf { it.y }
+        val firstWidth = firstMaxX - firstMinX
+        val firstHeight = firstMaxY - firstMinY
+
+        // Must be on the far left
+        if (firstMinX > writingWidth * INDENT_THRESHOLD) return null
+
+        // Must be short and very flat (a dash, not a letter)
+        if (firstWidth < 15f || firstWidth > 120f) return null
+        if (firstHeight > firstWidth * 0.4f) return null
+
+        // A real dash is a simple stroke — reject if the path length is much
+        // longer than the bounding box diagonal (indicates curves/loops like letters)
+        val pathLength = first.points.zipWithNext { a, b ->
+            val dx = b.x - a.x; val dy = b.y - a.y
+            kotlin.math.sqrt(dx * dx + dy * dy)
+        }.sum()
+        val diagonal = kotlin.math.sqrt(firstWidth * firstWidth + firstHeight * firstHeight)
+        if (pathLength > diagonal * 2f) return null
+
+        // Must have a gap between the marker and the next stroke
+        val secondMinX = sorted[1].points.minOf { it.x }
+        val gap = secondMinX - firstMaxX
+        if (gap < 20f) return null
+
+        return first.strokeId
+    }
+
+    /**
+     * Filter out the list marker stroke from a set of strokes before recognition.
+     */
+    private fun filterMarkerStroke(strokes: List<InkStroke>): List<InkStroke> {
+        val writingWidth = inkCanvas.width - GUTTER_WIDTH
+        val markerId = findListMarkerStrokeId(strokes, writingWidth) ?: return strokes
+        return strokes.filter { it.strokeId != markerId }
     }
 
     private fun updateTextScrollOffset() {
@@ -434,25 +509,37 @@ class WritingCoordinator(
 
         val paragraphs = mutableListOf<String>()
         var currentLines = mutableListOf<String>()
+        var currentIsList = false
 
         for (lineIdx in sortedLines) {
             val text = lineTextCache[lineIdx]
             if (text.isNullOrEmpty() || text == "[?]") continue
 
             val lineStrokes = strokesByLine[lineIdx]
+            val isList = lineStrokes != null && findListMarkerStrokeId(lineStrokes, writingWidth) != null
+
             if (lineStrokes != null && lineStrokes.isNotEmpty() && currentLines.isNotEmpty()) {
                 val leftmostX = lineStrokes.minOf { stroke -> stroke.points.minOf { it.x } }
-                if (leftmostX > writingWidth * INDENT_THRESHOLD) {
-                    paragraphs.add(currentLines.joinToString(" "))
+                val isIndented = leftmostX > writingWidth * INDENT_THRESHOLD
+                val shouldBreak = isList ||
+                    (isIndented && !currentIsList) ||
+                    (currentIsList && !isIndented && !isList)
+                if (shouldBreak) {
+                    val joined = currentLines.joinToString(" ")
+                    paragraphs.add(if (currentIsList) "- $joined" else joined)
                     currentLines = mutableListOf()
                 }
             }
 
+            if (currentLines.isEmpty()) {
+                currentIsList = isList
+            }
             currentLines.add(text)
         }
 
         if (currentLines.isNotEmpty()) {
-            paragraphs.add(currentLines.joinToString(" "))
+            val joined = currentLines.joinToString(" ")
+            paragraphs.add(if (currentIsList) "- $joined" else joined)
         }
 
         return paragraphs.joinToString("\n\n")

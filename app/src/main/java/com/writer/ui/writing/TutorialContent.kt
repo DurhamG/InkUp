@@ -83,16 +83,16 @@ object TutorialContent {
         // --- Line 3: Delete line demo (X gesture) ---
         strokes.addAll(textToStrokes("Once upon a time", 60f, baseline(3), 64f))
 
-        // Red X gesture: two crossing diagonals
+        // Red X-with-left-side gesture: single stroke TR → BL → TL → BR
         val xCenterX = 580f
         val xCenterY = baseline(3) - 22f
         val xSize = 28f
-        // First diagonal: top-left to bottom-right
-        annotations.add(makeLine(xCenterX - xSize, xCenterY - xSize, xCenterX + xSize, xCenterY + xSize, red, 5f))
-        // Second diagonal: top-right to bottom-left
+        // Stroke path: top-right → bottom-left → top-left → bottom-right
         annotations.add(makeLine(xCenterX + xSize, xCenterY - xSize, xCenterX - xSize, xCenterY + xSize, red, 5f))
+        annotations.add(makeLine(xCenterX - xSize, xCenterY + xSize, xCenterX - xSize, xCenterY - xSize, red, 5f))
+        annotations.add(makeLine(xCenterX - xSize, xCenterY - xSize, xCenterX + xSize, xCenterY + xSize, red, 5f))
         textAnnotations.add(
-            TextAnnotation("Draw X to delete entire line", xCenterX + xSize + 20f, xCenterY + 10f, red, 32f)
+            TextAnnotation("Draw X in one stroke to delete line", xCenterX + xSize + 20f, xCenterY + 10f, red, 32f)
         )
 
         // --- Lines 4-6: Insert line demo (two vertical lines) ---

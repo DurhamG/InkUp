@@ -137,7 +137,11 @@ class RecognizedTextView @JvmOverloads constructor(
 
     private val horizontalPadding = 40f
     private val paragraphSpacing = 22f
+    private val listItemSpacing = 6f
     private val firstLineIndent = 80
+    private val listBaseIndent = 60
+    private val bulletHangIndent = 100
+    private val bulletPrefix = "\u2022  "
     private val bottomPadding = 10f
 
     // Gutter drag state
@@ -168,10 +172,18 @@ class RecognizedTextView @JvmOverloads constructor(
         var height = 0f
         val allWrittenLineHeights = mutableListOf<Pair<Int, Float>>()
         val allSegmentStarts = mutableListOf<List<Int>>()
+        val allParagraphHeights = mutableListOf<Float>()
 
-        staticLayouts = paragraphs.map { segments ->
+        staticLayouts = paragraphs.mapIndexed { pIdx, segments ->
+            val isListItem = segments.firstOrNull()?.listItem == true
             val spannable = SpannableStringBuilder()
             val segmentStarts = mutableListOf<Int>()
+
+            // Prepend bullet for list items
+            if (isListItem) {
+                spannable.append(bulletPrefix)
+            }
+
             for ((i, segment) in segments.withIndex()) {
                 if (i > 0) spannable.append(" ")
                 val start = spannable.length
@@ -185,16 +197,31 @@ class RecognizedTextView @JvmOverloads constructor(
                     )
                 }
             }
-            spannable.setSpan(
-                LeadingMarginSpan.Standard(firstLineIndent, 0),
-                0, spannable.length,
-                SpannableStringBuilder.SPAN_EXCLUSIVE_EXCLUSIVE
-            )
+
+            if (isListItem) {
+                // Hanging indent: all lines indented, bullet hangs in the margin
+                spannable.setSpan(
+                    LeadingMarginSpan.Standard(listBaseIndent, bulletHangIndent),
+                    0, spannable.length,
+                    SpannableStringBuilder.SPAN_EXCLUSIVE_EXCLUSIVE
+                )
+            } else {
+                spannable.setSpan(
+                    LeadingMarginSpan.Standard(firstLineIndent, 0),
+                    0, spannable.length,
+                    SpannableStringBuilder.SPAN_EXCLUSIVE_EXCLUSIVE
+                )
+            }
+
             val layout = StaticLayout.Builder
                 .obtain(spannable, 0, spannable.length, textPaint, availableWidth)
                 .setAlignment(Layout.Alignment.ALIGN_NORMAL)
                 .setLineSpacing(8f, 1f)
                 .build()
+
+            // Determine spacing: use tight spacing between consecutive list items
+            val nextIsListItem = paragraphs.getOrNull(pIdx + 1)?.firstOrNull()?.listItem == true
+            val spacing = if (isListItem && nextIsListItem) listItemSpacing else paragraphSpacing
 
             // Attribute each rendered line to the segment whose text starts it.
             val segHeights = FloatArray(segments.size)
@@ -213,18 +240,19 @@ class RecognizedTextView @JvmOverloads constructor(
                 }
                 segHeights[owner] += rlBottom - rlTop
             }
-            segHeights[segments.lastIndex] += paragraphSpacing
+            segHeights[segments.lastIndex] += spacing
 
             for ((i, segment) in segments.withIndex()) {
                 allWrittenLineHeights.add(Pair(segment.lineIndex, segHeights[i]))
             }
 
             allSegmentStarts.add(segmentStarts.toList())
-            height += layout.height + paragraphSpacing
+            allParagraphHeights.add(layout.height.toFloat() + spacing)
+            height += layout.height + spacing
             layout
         }
         paragraphSegmentStarts = allSegmentStarts
-        paragraphHeights = staticLayouts.map { it.height.toFloat() + paragraphSpacing }
+        paragraphHeights = allParagraphHeights
         writtenLineHeights = allWrittenLineHeights
         totalTextHeight = height.toInt()
     }
