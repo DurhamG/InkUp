@@ -6,7 +6,7 @@ import android.os.Bundle
 import android.util.Log
 import android.view.WindowInsets
 import android.view.WindowInsetsController
-import android.widget.EditText
+import android.app.Activity
 import android.widget.LinearLayout
 import android.view.Gravity
 import android.view.LayoutInflater
@@ -53,6 +53,25 @@ class WritingActivity : AppCompatActivity() {
 
     // Current document name
     private var currentDocumentName: String = ""
+
+    // Rename handwriting activity
+    private val renameLauncher = registerForActivityResult(
+        ActivityResultContracts.StartActivityForResult()
+    ) { result ->
+        if (result.resultCode == Activity.RESULT_OK) {
+            val name = result.data?.getStringExtra(SaveAsActivity.EXTRA_RESULT_NAME)
+            if (!name.isNullOrBlank() && name != currentDocumentName) {
+                val oldName = currentDocumentName
+                currentDocumentName = name
+                getSharedPreferences(PREFS_NAME, MODE_PRIVATE).edit()
+                    .putString(PREF_CURRENT_DOC, name).apply()
+                saveDocument()
+                DocumentStorage.delete(this, oldName)
+                Toast.makeText(this, "Renamed to \"$name\"", Toast.LENGTH_SHORT).show()
+            }
+        }
+        inkCanvas.reopenRawDrawing()
+    }
 
     // SAF folder picker
     private val pickSyncFolder = registerForActivityResult(
@@ -268,40 +287,87 @@ class WritingActivity : AppCompatActivity() {
 
         inkCanvas.pauseRawDrawing()
         val names = docs.map { it.name }.toTypedArray()
-        AlertDialog.Builder(this)
-            .setTitle("Open Document")
-            .setItems(names) { _, which ->
-                switchToDocument(names[which])
-            }
-            .setNegativeButton("Cancel", null)
-            .setOnDismissListener { inkCanvas.resumeRawDrawing() }
-            .show()
-    }
 
-    private fun showSaveAsDialog() {
-        inkCanvas.pauseRawDrawing()
-        val editText = EditText(this).apply {
-            hint = "Document name"
-            setText(currentDocumentName)
-            setPadding(48, 32, 48, 16)
-            selectAll()
+        val container = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(0, 16, 0, 16)
+            setBackgroundResource(R.drawable.bg_dialog_border)
         }
-        AlertDialog.Builder(this)
-            .setTitle("Save As")
-            .setView(editText)
-            .setPositiveButton("Save") { _, _ ->
-                val name = editText.text.toString().trim()
-                if (name.isNotEmpty()) {
-                    currentDocumentName = name
-                    getSharedPreferences(PREFS_NAME, MODE_PRIVATE).edit()
-                        .putString(PREF_CURRENT_DOC, name).apply()
-                    saveDocument()
-                    Toast.makeText(this, "Saved as \"$name\"", Toast.LENGTH_SHORT).show()
+
+        val dialog = AlertDialog.Builder(this)
+            .setView(container)
+            .setOnDismissListener { inkCanvas.resumeRawDrawing() }
+            .create()
+
+        // Title
+        val title = android.widget.TextView(this).apply {
+            text = "Open Document"
+            textSize = 26f
+            setTextColor(android.graphics.Color.BLACK)
+            setPadding(48, 40, 48, 24)
+        }
+        container.addView(title)
+
+        // Divider under title
+        container.addView(android.view.View(this).apply {
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, 2
+            ).apply { setMargins(32, 0, 32, 0) }
+            setBackgroundColor(android.graphics.Color.parseColor("#AAAAAA"))
+        })
+
+        // Document items
+        for (name in names) {
+            val item = android.widget.TextView(this).apply {
+                text = name
+                textSize = 24f
+                setTextColor(android.graphics.Color.BLACK)
+                setPadding(48, 32, 48, 32)
+                setBackgroundResource(android.R.drawable.list_selector_background)
+                setOnClickListener {
+                    dialog.dismiss()
+                    switchToDocument(name)
                 }
             }
-            .setNegativeButton("Cancel", null)
-            .setOnDismissListener { inkCanvas.resumeRawDrawing() }
-            .show()
+            container.addView(item)
+
+            // Divider between items
+            container.addView(android.view.View(this).apply {
+                layoutParams = LinearLayout.LayoutParams(
+                    LinearLayout.LayoutParams.MATCH_PARENT, 1
+                ).apply { setMargins(32, 0, 32, 0) }
+                setBackgroundColor(android.graphics.Color.parseColor("#DDDDDD"))
+            })
+        }
+
+        // Cancel button
+        val cancel = android.widget.TextView(this).apply {
+            text = "Cancel"
+            textSize = 22f
+            setTextColor(android.graphics.Color.BLACK)
+            setPadding(48, 24, 48, 24)
+            gravity = Gravity.END
+            setOnClickListener { dialog.dismiss() }
+        }
+        container.addView(cancel)
+
+        dialog.show()
+
+        // Remove default dialog background so our border isn't clipped
+        dialog.window?.setBackgroundDrawableResource(android.R.color.transparent)
+        dialog.window?.setLayout(
+            (resources.displayMetrics.density * 600).toInt(),
+            android.view.WindowManager.LayoutParams.WRAP_CONTENT
+        )
+    }
+
+    private fun showRenameDialog() {
+        // Fully close the Onyx SDK so SaveAsActivity's touch input works
+        inkCanvas.closeRawDrawing()
+        val intent = Intent(this, SaveAsActivity::class.java).apply {
+            putExtra(SaveAsActivity.EXTRA_CURRENT_NAME, currentDocumentName)
+        }
+        renameLauncher.launch(intent)
     }
 
     // --- Menu ---
@@ -324,9 +390,10 @@ class WritingActivity : AppCompatActivity() {
 
         var openingTutorial = false
         var launchingSaf = false
+        var launchingSaveAs = false
 
         popup.setOnDismissListener {
-            if (!openingTutorial && !launchingSaf) {
+            if (!openingTutorial && !launchingSaf && !launchingSaveAs) {
                 inkCanvas.resumeRawDrawing()
             }
         }
@@ -339,9 +406,10 @@ class WritingActivity : AppCompatActivity() {
             popup.dismiss()
             showOpenDialog()
         }
-        popupView.findViewById<android.view.View>(R.id.menuSaveAs).setOnClickListener {
+        popupView.findViewById<android.view.View>(R.id.menuRename).setOnClickListener {
+            launchingSaveAs = true
             popup.dismiss()
-            showSaveAsDialog()
+            showRenameDialog()
         }
         popupView.findViewById<android.view.View>(R.id.menuSyncFolder).setOnClickListener {
             launchingSaf = true

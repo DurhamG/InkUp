@@ -414,6 +414,27 @@ class HandwritingCanvasView @JvmOverloads constructor(
         canvas.drawPath(path, strokePaint)
     }
 
+    /** Fully close Onyx SDK raw drawing session (e.g. before launching another activity). */
+    fun closeRawDrawing() {
+        if (useOnyxSdk) {
+            try {
+                touchHelper?.closeRawDrawing()
+                useOnyxSdk = false
+                Log.i(TAG, "Onyx SDK raw drawing closed")
+            } catch (e: Exception) {
+                Log.w(TAG, "Error closing raw drawing: ${e.message}")
+            }
+        }
+    }
+
+    /** Reopen Onyx SDK raw drawing after it was closed (e.g. returning from another activity). */
+    fun reopenRawDrawing() {
+        if (!surfaceReady) return
+        if (useOnyxSdk) return
+        tryInitOnyx()
+        drawToSurface()
+    }
+
     /** Pause Onyx SDK raw drawing (needed before scrolling/screen refresh). */
     fun pauseRawDrawing() {
         if (useOnyxSdk) {

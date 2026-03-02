@@ -48,10 +48,10 @@
         android:layout_marginEnd="16dp" />
 
     <TextView
-        android:id="@+id/menuSaveAs"
+        android:id="@+id/menuRename"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:text="Save As"
+        android:text="Rename"
         android:textSize="22sp"
         android:textColor="@color/black"
         android:paddingStart="24dp"

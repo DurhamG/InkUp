@@ -23,6 +23,12 @@
             android:configChanges="orientation|screenSize|screenLayout"
             android:windowSoftInputMode="stateHidden" />
 
+        <activity
+            android:name=".ui.writing.SaveAsActivity"
+            android:theme="@style/Theme.Writer.Dialog"
+            android:configChanges="orientation|screenSize|screenLayout"
+            android:windowSoftInputMode="stateHidden" />
+
         <activity android:name=".ui.settings.SettingsActivity" />
     </application>
 
