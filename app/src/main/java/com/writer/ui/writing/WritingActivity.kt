@@ -134,11 +134,17 @@ class WritingActivity : AppCompatActivity() {
         // Tap "W" logo to open menu
         recognizedTextView.onLogoTap = { showMenu() }
 
+        // Create coordinator early so cached text can be displayed before model loads
+        startCoordinator()
+
         // Capture default heights after initial layout, then wire up the gutter
         recognizedTextView.post {
             defaultTextHeight = recognizedTextView.height
             defaultCanvasHeight = inkCanvas.height
             setupTextGutter()
+
+            // Restore cached text and scroll position immediately (no recognizer needed)
+            restoreCoordinatorState()
 
             // Show tutorial on first launch
             if (tutorialManager.shouldAutoShow()) {
@@ -147,14 +153,12 @@ class WritingActivity : AppCompatActivity() {
             }
         }
 
-        // Initialize recognizer then start the coordinator
+        // Initialize recognizer in the background
         recognizedTextView.statusMessage = "Loading..."
         lifecycleScope.launch {
             try {
                 recognizer.initialize(documentModel.language)
                 recognizedTextView.statusMessage = ""
-                startCoordinator()
-                restoreCoordinatorState()
             } catch (e: Exception) {
                 recognizedTextView.statusMessage = "Error"
                 Toast.makeText(
@@ -162,7 +166,6 @@ class WritingActivity : AppCompatActivity() {
                     "Failed to load recognition model: ${e.message}",
                     Toast.LENGTH_LONG
                 ).show()
-                startCoordinatorWithoutRecognition()
             }
         }
     }
@@ -179,7 +182,7 @@ class WritingActivity : AppCompatActivity() {
         inkCanvas.drawToSurface()
     }
 
-    /** Restore coordinator state (text cache, hidden lines) after recognizer is ready. */
+    /** Restore coordinator state (text cache, hidden lines) — no recognizer needed. */
     private fun restoreCoordinatorState() {
         if (tutorialManager.isActive) return // defer until tutorial closes
         val data = pendingRestore ?: return
@@ -221,13 +224,6 @@ class WritingActivity : AppCompatActivity() {
             }
         )
         coordinator?.start()
-    }
-
-    private fun startCoordinatorWithoutRecognition() {
-        inkCanvas.onStrokeCompleted = { _ ->
-            val count = inkCanvas.getStrokeCount()
-            recognizedTextView.statusMessage = "$count strokes"
-        }
     }
 
     // --- Document operations ---
