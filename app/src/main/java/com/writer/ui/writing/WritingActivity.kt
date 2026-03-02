@@ -1,14 +1,19 @@
 package com.writer.ui.writing
 
+import android.content.Intent
+import android.net.Uri
 import android.os.Bundle
 import android.util.Log
 import android.view.WindowInsets
 import android.view.WindowInsetsController
+import android.widget.EditText
 import android.widget.LinearLayout
 import android.view.Gravity
 import android.view.LayoutInflater
 import android.widget.PopupWindow
 import android.widget.Toast
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.view.WindowCompat
 import androidx.lifecycle.lifecycleScope
@@ -25,6 +30,9 @@ class WritingActivity : AppCompatActivity() {
 
     companion object {
         private const val TAG = "WritingActivity"
+        private const val PREFS_NAME = "writer_prefs"
+        private const val PREF_CURRENT_DOC = "current_document"
+        private const val PREF_SYNC_FOLDER = "sync_folder_uri"
     }
 
     private lateinit var inkCanvas: HandwritingCanvasView
@@ -42,6 +50,26 @@ class WritingActivity : AppCompatActivity() {
 
     // Saved data loaded before coordinator is ready
     private var pendingRestore: DocumentData? = null
+
+    // Current document name
+    private var currentDocumentName: String = ""
+
+    // SAF folder picker
+    private val pickSyncFolder = registerForActivityResult(
+        ActivityResultContracts.OpenDocumentTree()
+    ) { uri: Uri? ->
+        if (uri != null) {
+            contentResolver.takePersistableUriPermission(
+                uri,
+                Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION
+            )
+            getSharedPreferences(PREFS_NAME, MODE_PRIVATE).edit()
+                .putString(PREF_SYNC_FOLDER, uri.toString())
+                .apply()
+            Toast.makeText(this, "Sync folder set", Toast.LENGTH_SHORT).show()
+        }
+        inkCanvas.resumeRawDrawing()
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -72,8 +100,16 @@ class WritingActivity : AppCompatActivity() {
             onClosed = { recognizedTextView.onLogoTap = { showMenu() } }
         )
 
+        // Migrate old single-file storage if needed, then determine current document
+        val prefs = getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
+        val migrated = DocumentStorage.migrateIfNeeded(this)
+        currentDocumentName = migrated
+            ?: prefs.getString(PREF_CURRENT_DOC, null)
+            ?: DocumentStorage.generateName(this)
+        prefs.edit().putString(PREF_CURRENT_DOC, currentDocumentName).apply()
+
         // Load saved document data and restore strokes immediately (no recognizer needed)
-        pendingRestore = DocumentStorage.load(this)
+        pendingRestore = DocumentStorage.load(this, currentDocumentName)
         restoreDocumentVisuals()
 
         // Tap "W" logo to open menu
@@ -175,6 +211,101 @@ class WritingActivity : AppCompatActivity() {
         }
     }
 
+    // --- Document operations ---
+
+    private fun switchToDocument(name: String) {
+        saveDocument()
+
+        // Clear current state
+        coordinator?.stop()
+        coordinator?.reset()
+        documentModel.activeStrokes.clear()
+        inkCanvas.clear()
+        recognizedTextView.setParagraphs(emptyList())
+
+        // Load new document
+        currentDocumentName = name
+        getSharedPreferences(PREFS_NAME, MODE_PRIVATE).edit()
+            .putString(PREF_CURRENT_DOC, name).apply()
+
+        val data = DocumentStorage.load(this, name)
+        if (data != null) {
+            documentModel.activeStrokes.addAll(data.strokes)
+            inkCanvas.loadStrokes(data.strokes)
+            inkCanvas.scrollOffsetY = data.scrollOffsetY
+            inkCanvas.drawToSurface()
+            coordinator?.start()
+            coordinator?.restoreState(data)
+        } else {
+            inkCanvas.drawToSurface()
+            coordinator?.start()
+        }
+    }
+
+    private fun newDocument() {
+        saveDocument()
+
+        coordinator?.stop()
+        coordinator?.reset()
+        documentModel.activeStrokes.clear()
+        inkCanvas.clear()
+        recognizedTextView.setParagraphs(emptyList())
+
+        currentDocumentName = DocumentStorage.generateName(this)
+        getSharedPreferences(PREFS_NAME, MODE_PRIVATE).edit()
+            .putString(PREF_CURRENT_DOC, currentDocumentName).apply()
+
+        coordinator?.start()
+        inkCanvas.drawToSurface()
+    }
+
+    private fun showOpenDialog() {
+        val docs = DocumentStorage.listDocuments(this)
+        if (docs.isEmpty()) {
+            Toast.makeText(this, "No saved documents", Toast.LENGTH_SHORT).show()
+            return
+        }
+
+        inkCanvas.pauseRawDrawing()
+        val names = docs.map { it.name }.toTypedArray()
+        AlertDialog.Builder(this)
+            .setTitle("Open Document")
+            .setItems(names) { _, which ->
+                switchToDocument(names[which])
+            }
+            .setNegativeButton("Cancel", null)
+            .setOnDismissListener { inkCanvas.resumeRawDrawing() }
+            .show()
+    }
+
+    private fun showSaveAsDialog() {
+        inkCanvas.pauseRawDrawing()
+        val editText = EditText(this).apply {
+            hint = "Document name"
+            setText(currentDocumentName)
+            setPadding(48, 32, 48, 16)
+            selectAll()
+        }
+        AlertDialog.Builder(this)
+            .setTitle("Save As")
+            .setView(editText)
+            .setPositiveButton("Save") { _, _ ->
+                val name = editText.text.toString().trim()
+                if (name.isNotEmpty()) {
+                    currentDocumentName = name
+                    getSharedPreferences(PREFS_NAME, MODE_PRIVATE).edit()
+                        .putString(PREF_CURRENT_DOC, name).apply()
+                    saveDocument()
+                    Toast.makeText(this, "Saved as \"$name\"", Toast.LENGTH_SHORT).show()
+                }
+            }
+            .setNegativeButton("Cancel", null)
+            .setOnDismissListener { inkCanvas.resumeRawDrawing() }
+            .show()
+    }
+
+    // --- Menu ---
+
     private fun showMenu() {
         inkCanvas.pauseRawDrawing()
 
@@ -192,13 +323,31 @@ class WritingActivity : AppCompatActivity() {
         popup.elevation = 0f // no shadow for e-ink
 
         var openingTutorial = false
+        var launchingSaf = false
 
         popup.setOnDismissListener {
-            if (!openingTutorial) {
+            if (!openingTutorial && !launchingSaf) {
                 inkCanvas.resumeRawDrawing()
             }
         }
 
+        popupView.findViewById<android.view.View>(R.id.menuNew).setOnClickListener {
+            popup.dismiss()
+            newDocument()
+        }
+        popupView.findViewById<android.view.View>(R.id.menuOpen).setOnClickListener {
+            popup.dismiss()
+            showOpenDialog()
+        }
+        popupView.findViewById<android.view.View>(R.id.menuSaveAs).setOnClickListener {
+            popup.dismiss()
+            showSaveAsDialog()
+        }
+        popupView.findViewById<android.view.View>(R.id.menuSyncFolder).setOnClickListener {
+            launchingSaf = true
+            popup.dismiss()
+            pickSyncFolder.launch(null)
+        }
         popupView.findViewById<android.view.View>(R.id.menuTutorial).setOnClickListener {
             openingTutorial = true
             popup.dismiss()
@@ -232,7 +381,17 @@ class WritingActivity : AppCompatActivity() {
     private fun saveDocument() {
         if (tutorialManager.isActive) return // Don't save tutorial state as a document
         val state = coordinator?.getState() ?: return
-        DocumentStorage.save(this, state)
+        DocumentStorage.save(this, currentDocumentName, state)
+
+        // Export to sync folder if configured
+        val syncUri = getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
+            .getString(PREF_SYNC_FOLDER, null)
+        if (syncUri != null) {
+            val markdown = coordinator?.getMarkdownText() ?: ""
+            DocumentStorage.exportToSyncFolder(
+                this, currentDocumentName, state, markdown, Uri.parse(syncUri)
+            )
+        }
     }
 
     override fun onDestroy() {

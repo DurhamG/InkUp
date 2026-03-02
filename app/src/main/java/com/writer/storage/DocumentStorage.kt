@@ -1,12 +1,17 @@
 package com.writer.storage
 
 import android.content.Context
+import android.net.Uri
 import android.util.Log
+import androidx.documentfile.provider.DocumentFile
 import com.writer.model.InkStroke
 import com.writer.model.StrokePoint
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 
 data class DocumentData(
     val strokes: List<InkStroke>,
@@ -17,136 +22,238 @@ data class DocumentData(
     val currentLineIndex: Int
 )
 
+data class DocumentInfo(
+    val name: String,
+    val lastModified: Long
+)
+
 object DocumentStorage {
 
     private const val TAG = "DocumentStorage"
-    private const val FILE_NAME = "document.json"
+    private const val DOCS_DIR = "documents"
+    private const val LEGACY_FILE = "document.json"
 
-    fun save(context: Context, data: DocumentData) {
+    private fun docsDir(context: Context): File {
+        val dir = File(context.filesDir, DOCS_DIR)
+        if (!dir.exists()) dir.mkdirs()
+        return dir
+    }
+
+    private fun docFile(context: Context, name: String): File {
+        return File(docsDir(context), "$name.json")
+    }
+
+    // --- Migration ---
+
+    fun migrateIfNeeded(context: Context): String? {
+        val legacy = File(context.filesDir, LEGACY_FILE)
+        if (!legacy.exists()) return null
+
+        val targetName = "Document 1"
+        val target = docFile(context, targetName)
+        if (!target.exists()) {
+            legacy.copyTo(target)
+        }
+        legacy.delete()
+        Log.i(TAG, "Migrated $LEGACY_FILE → $DOCS_DIR/$targetName.json")
+        return targetName
+    }
+
+    // --- Multi-document CRUD ---
+
+    fun save(context: Context, name: String, data: DocumentData) {
         try {
-            val json = JSONObject()
-
-            json.put("scrollOffsetY", data.scrollOffsetY.toDouble())
-            json.put("highestLineIndex", data.highestLineIndex)
-            json.put("currentLineIndex", data.currentLineIndex)
-
-            // lineTextCache
-            val cacheObj = JSONObject()
-            for ((key, value) in data.lineTextCache) {
-                cacheObj.put(key.toString(), value)
-            }
-            json.put("lineTextCache", cacheObj)
-
-            // everHiddenLines
-            val hiddenArr = JSONArray()
-            for (line in data.everHiddenLines) {
-                hiddenArr.put(line)
-            }
-            json.put("everHiddenLines", hiddenArr)
-
-            // strokes
-            val strokesArr = JSONArray()
-            for (stroke in data.strokes) {
-                val strokeObj = JSONObject()
-                strokeObj.put("strokeId", stroke.strokeId)
-                strokeObj.put("strokeWidth", stroke.strokeWidth.toDouble())
-
-                val pointsArr = JSONArray()
-                for (pt in stroke.points) {
-                    val ptObj = JSONObject()
-                    ptObj.put("x", pt.x.toDouble())
-                    ptObj.put("y", pt.y.toDouble())
-                    ptObj.put("pressure", pt.pressure.toDouble())
-                    ptObj.put("timestamp", pt.timestamp)
-                    pointsArr.put(ptObj)
-                }
-                strokeObj.put("points", pointsArr)
-                strokesArr.put(strokeObj)
-            }
-            json.put("strokes", strokesArr)
-
-            val file = File(context.filesDir, FILE_NAME)
+            val json = serializeToJson(data)
+            val file = docFile(context, name)
             file.writeText(json.toString())
-            Log.i(TAG, "Saved ${data.strokes.size} strokes to $FILE_NAME")
+            Log.i(TAG, "Saved ${data.strokes.size} strokes to $name")
         } catch (e: Exception) {
-            Log.e(TAG, "Failed to save document", e)
+            Log.e(TAG, "Failed to save document $name", e)
         }
     }
 
-    fun load(context: Context): DocumentData? {
+    fun load(context: Context, name: String): DocumentData? {
         try {
-            val file = File(context.filesDir, FILE_NAME)
+            val file = docFile(context, name)
             if (!file.exists()) return null
+            val data = deserializeFromJson(file.readText())
+            Log.i(TAG, "Loaded ${data.strokes.size} strokes from $name")
+            return data
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to load document $name", e)
+            return null
+        }
+    }
 
-            val json = JSONObject(file.readText())
+    fun listDocuments(context: Context): List<DocumentInfo> {
+        val dir = docsDir(context)
+        return dir.listFiles()
+            ?.filter { it.extension == "json" }
+            ?.map { DocumentInfo(it.nameWithoutExtension, it.lastModified()) }
+            ?.sortedByDescending { it.lastModified }
+            ?: emptyList()
+    }
 
-            val scrollOffsetY = json.optDouble("scrollOffsetY", 0.0).toFloat()
-            val highestLineIndex = json.optInt("highestLineIndex", -1)
-            val currentLineIndex = json.optInt("currentLineIndex", -1)
+    fun delete(context: Context, name: String): Boolean {
+        return docFile(context, name).delete()
+    }
 
-            // lineTextCache
-            val lineTextCache = mutableMapOf<Int, String>()
-            val cacheObj = json.optJSONObject("lineTextCache")
-            if (cacheObj != null) {
-                for (key in cacheObj.keys()) {
-                    lineTextCache[key.toInt()] = cacheObj.getString(key)
+    fun generateName(context: Context): String {
+        val dateStr = SimpleDateFormat("yyyy-MM-dd", Locale.US).format(Date())
+        val base = "Document $dateStr"
+        if (!docFile(context, base).exists()) return base
+
+        var i = 2
+        while (docFile(context, "$base ($i)").exists()) i++
+        return "$base ($i)"
+    }
+
+    // --- Sync folder export ---
+
+    fun exportToSyncFolder(
+        context: Context,
+        name: String,
+        data: DocumentData,
+        markdownText: String,
+        syncFolderUri: Uri
+    ) {
+        try {
+            val folder = DocumentFile.fromTreeUri(context, syncFolderUri) ?: return
+
+            // Write .writer file (proprietary JSON)
+            val writerFileName = "$name.writer"
+            val existingWriter = folder.findFile(writerFileName)
+            val writerFile = existingWriter
+                ?: folder.createFile("application/octet-stream", writerFileName)
+            if (writerFile != null) {
+                context.contentResolver.openOutputStream(writerFile.uri, "wt")?.use { out ->
+                    out.write(serializeToJson(data).toString().toByteArray())
                 }
             }
 
-            // everHiddenLines
-            val everHiddenLines = mutableSetOf<Int>()
-            val hiddenArr = json.optJSONArray("everHiddenLines")
-            if (hiddenArr != null) {
-                for (i in 0 until hiddenArr.length()) {
-                    everHiddenLines.add(hiddenArr.getInt(i))
+            // Write .md file (recognized text)
+            val mdFileName = "$name.md"
+            val existingMd = folder.findFile(mdFileName)
+            val mdFile = existingMd
+                ?: folder.createFile("text/markdown", mdFileName)
+            if (mdFile != null) {
+                context.contentResolver.openOutputStream(mdFile.uri, "wt")?.use { out ->
+                    out.write(markdownText.toByteArray())
                 }
             }
 
-            // strokes
-            val strokes = mutableListOf<InkStroke>()
-            val strokesArr = json.optJSONArray("strokes")
-            if (strokesArr != null) {
-                for (i in 0 until strokesArr.length()) {
-                    val strokeObj = strokesArr.getJSONObject(i)
-                    val strokeId = strokeObj.getString("strokeId")
-                    val strokeWidth = strokeObj.optDouble("strokeWidth", 5.0).toFloat()
+            Log.i(TAG, "Exported $name to sync folder")
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to export $name to sync folder", e)
+        }
+    }
 
-                    val pointsArr = strokeObj.getJSONArray("points")
-                    val points = mutableListOf<StrokePoint>()
-                    for (j in 0 until pointsArr.length()) {
-                        val ptObj = pointsArr.getJSONObject(j)
-                        points.add(
-                            StrokePoint(
-                                x = ptObj.getDouble("x").toFloat(),
-                                y = ptObj.getDouble("y").toFloat(),
-                                pressure = ptObj.getDouble("pressure").toFloat(),
-                                timestamp = ptObj.getLong("timestamp")
-                            )
-                        )
-                    }
+    // --- Serialization ---
 
-                    strokes.add(
-                        InkStroke(
-                            strokeId = strokeId,
-                            points = points,
-                            strokeWidth = strokeWidth
+    private fun serializeToJson(data: DocumentData): JSONObject {
+        val json = JSONObject()
+
+        json.put("scrollOffsetY", data.scrollOffsetY.toDouble())
+        json.put("highestLineIndex", data.highestLineIndex)
+        json.put("currentLineIndex", data.currentLineIndex)
+
+        val cacheObj = JSONObject()
+        for ((key, value) in data.lineTextCache) {
+            cacheObj.put(key.toString(), value)
+        }
+        json.put("lineTextCache", cacheObj)
+
+        val hiddenArr = JSONArray()
+        for (line in data.everHiddenLines) {
+            hiddenArr.put(line)
+        }
+        json.put("everHiddenLines", hiddenArr)
+
+        val strokesArr = JSONArray()
+        for (stroke in data.strokes) {
+            val strokeObj = JSONObject()
+            strokeObj.put("strokeId", stroke.strokeId)
+            strokeObj.put("strokeWidth", stroke.strokeWidth.toDouble())
+
+            val pointsArr = JSONArray()
+            for (pt in stroke.points) {
+                val ptObj = JSONObject()
+                ptObj.put("x", pt.x.toDouble())
+                ptObj.put("y", pt.y.toDouble())
+                ptObj.put("pressure", pt.pressure.toDouble())
+                ptObj.put("timestamp", pt.timestamp)
+                pointsArr.put(ptObj)
+            }
+            strokeObj.put("points", pointsArr)
+            strokesArr.put(strokeObj)
+        }
+        json.put("strokes", strokesArr)
+
+        return json
+    }
+
+    private fun deserializeFromJson(text: String): DocumentData {
+        val json = JSONObject(text)
+
+        val scrollOffsetY = json.optDouble("scrollOffsetY", 0.0).toFloat()
+        val highestLineIndex = json.optInt("highestLineIndex", -1)
+        val currentLineIndex = json.optInt("currentLineIndex", -1)
+
+        val lineTextCache = mutableMapOf<Int, String>()
+        val cacheObj = json.optJSONObject("lineTextCache")
+        if (cacheObj != null) {
+            for (key in cacheObj.keys()) {
+                lineTextCache[key.toInt()] = cacheObj.getString(key)
+            }
+        }
+
+        val everHiddenLines = mutableSetOf<Int>()
+        val hiddenArr = json.optJSONArray("everHiddenLines")
+        if (hiddenArr != null) {
+            for (i in 0 until hiddenArr.length()) {
+                everHiddenLines.add(hiddenArr.getInt(i))
+            }
+        }
+
+        val strokes = mutableListOf<InkStroke>()
+        val strokesArr = json.optJSONArray("strokes")
+        if (strokesArr != null) {
+            for (i in 0 until strokesArr.length()) {
+                val strokeObj = strokesArr.getJSONObject(i)
+                val strokeId = strokeObj.getString("strokeId")
+                val strokeWidth = strokeObj.optDouble("strokeWidth", 5.0).toFloat()
+
+                val pointsArr = strokeObj.getJSONArray("points")
+                val points = mutableListOf<StrokePoint>()
+                for (j in 0 until pointsArr.length()) {
+                    val ptObj = pointsArr.getJSONObject(j)
+                    points.add(
+                        StrokePoint(
+                            x = ptObj.getDouble("x").toFloat(),
+                            y = ptObj.getDouble("y").toFloat(),
+                            pressure = ptObj.getDouble("pressure").toFloat(),
+                            timestamp = ptObj.getLong("timestamp")
                         )
                     )
                 }
-            }
 
-            Log.i(TAG, "Loaded ${strokes.size} strokes from $FILE_NAME")
-            return DocumentData(
-                strokes = strokes,
-                scrollOffsetY = scrollOffsetY,
-                lineTextCache = lineTextCache,
-                everHiddenLines = everHiddenLines,
-                highestLineIndex = highestLineIndex,
-                currentLineIndex = currentLineIndex
-            )
-        } catch (e: Exception) {
-            Log.e(TAG, "Failed to load document", e)
-            return null
+                strokes.add(
+                    InkStroke(
+                        strokeId = strokeId,
+                        points = points,
+                        strokeWidth = strokeWidth
+                    )
+                )
+            }
         }
+
+        return DocumentData(
+            strokes = strokes,
+            scrollOffsetY = scrollOffsetY,
+            lineTextCache = lineTextCache,
+            everHiddenLines = everHiddenLines,
+            highestLineIndex = highestLineIndex,
+            currentLineIndex = currentLineIndex
+        )
     }
 }

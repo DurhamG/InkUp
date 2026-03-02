@@ -423,6 +423,41 @@ class WritingCoordinator(
         textView.textScrollOffset = offset
     }
 
+    // --- Markdown export ---
+
+    fun getMarkdownText(): String {
+        if (lineTextCache.isEmpty()) return ""
+
+        val strokesByLine = lineSegmenter.groupByLine(documentModel.activeStrokes)
+        val writingWidth = inkCanvas.width - GUTTER_WIDTH
+        val sortedLines = lineTextCache.keys.sorted()
+
+        val paragraphs = mutableListOf<String>()
+        var currentLines = mutableListOf<String>()
+
+        for (lineIdx in sortedLines) {
+            val text = lineTextCache[lineIdx]
+            if (text.isNullOrEmpty() || text == "[?]") continue
+
+            val lineStrokes = strokesByLine[lineIdx]
+            if (lineStrokes != null && lineStrokes.isNotEmpty() && currentLines.isNotEmpty()) {
+                val leftmostX = lineStrokes.minOf { stroke -> stroke.points.minOf { it.x } }
+                if (leftmostX > writingWidth * INDENT_THRESHOLD) {
+                    paragraphs.add(currentLines.joinToString(" "))
+                    currentLines = mutableListOf()
+                }
+            }
+
+            currentLines.add(text)
+        }
+
+        if (currentLines.isNotEmpty()) {
+            paragraphs.add(currentLines.joinToString(" "))
+        }
+
+        return paragraphs.joinToString("\n\n")
+    }
+
     // --- State persistence ---
 
     fun getState(): DocumentData {
