@@ -97,11 +97,6 @@ class RecognizedTextView @JvmOverloads constructor(
         isAntiAlias = true
     }
 
-    private val debugPaint = TextPaint().apply {
-        color = Color.RED
-        textSize = 32f
-        isAntiAlias = true
-    }
 
     /** When true, show tutorial annotations and close button. */
     var tutorialMode = false
@@ -159,9 +154,6 @@ class RecognizedTextView @JvmOverloads constructor(
     // Hit-test data (stored on each setParagraphs call)
     private var currentParagraphs: List<List<TextSegment>> = emptyList()
     private var paragraphSegmentStarts: List<List<Int>> = emptyList()
-
-    // Debug: last tapped line info
-    private var debugTapInfo: String = ""
 
     fun setParagraphs(paragraphs: List<List<TextSegment>>) {
         currentParagraphs = paragraphs
@@ -367,16 +359,12 @@ class RecognizedTextView @JvmOverloads constructor(
                 }
 
                 val segment = segments.getOrNull(ownerIdx) ?: return
-                debugTapInfo = "Tapped line ${segment.lineIndex} (seg=$ownerIdx \"${segment.text.take(20)}\")"
-                invalidate()
                 callback(segment.lineIndex)
                 return
             }
 
             cumulativeY = pEnd
         }
-        debugTapInfo = "Tap miss (y=${"%.0f".format(y)}, startY=${"%.0f".format(startY)})"
-        invalidate()
     }
 
     // --- Drawing ---
@@ -414,11 +402,6 @@ class RecognizedTextView @JvmOverloads constructor(
         // Draw status message below logo if present
         if (statusMessage.isNotEmpty()) {
             canvas.drawText(statusMessage, gutterCenterX, GUTTER_WIDTH + 32f, statusPaint)
-        }
-
-        // Debug: show last tapped line info
-        if (debugTapInfo.isNotEmpty()) {
-            canvas.drawText(debugTapInfo, 10f, 36f, debugPaint)
         }
 
         if (tutorialMode) {

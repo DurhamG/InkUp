@@ -29,14 +29,12 @@ class GestureHandler(
      * (caller should not add the stroke to the document model).
      */
     fun tryHandle(stroke: InkStroke): Boolean {
+        if (isDeleteLineGesture(stroke)) {
+            handleDeleteLine(stroke)
+            return true
+        }
         if (isStrikethroughGesture(stroke)) {
-            val gestureMaxX = stroke.points.maxOf { it.x }
-            val canvasWritingWidth = inkCanvas.width - HandwritingCanvasView.GUTTER_WIDTH
-            if (gestureMaxX >= canvasWritingWidth) {
-                handleDeleteLine(stroke)
-            } else {
-                handleStrikethrough(stroke)
-            }
+            handleStrikethrough(stroke)
             return true
         }
         if (isVerticalLineGesture(stroke)) {
@@ -65,6 +63,120 @@ class GestureHandler(
         if (startLineIdx != endLineIdx) return false
 
         return true
+    }
+
+    /**
+     * Detect an X-with-left-side gesture for line deletion.
+     * The stroke traces: top-right → bottom-left → top-left → bottom-right.
+     *
+     * We find corners (sharp direction changes) in the stroke, then check
+     * that the 4 key points (start, corner1, corner2, end) match the
+     * expected spatial pattern.
+     */
+    private fun isDeleteLineGesture(stroke: InkStroke): Boolean {
+        if (stroke.points.size < 8) return false
+
+        val minX = stroke.points.minOf { it.x }
+        val maxX = stroke.points.maxOf { it.x }
+        val minY = stroke.points.minOf { it.y }
+        val maxY = stroke.points.maxOf { it.y }
+
+        val xRange = maxX - minX
+        val yRange = maxY - minY
+
+        // Must be compact and roughly square-ish
+        if (xRange < 40f || yRange < 40f) return false
+        if (xRange > yRange * 3f || yRange > xRange * 3f) return false
+
+        // Must fit within one line
+        val startLineIdx = lineSegmenter.getLineIndex(minY)
+        val endLineIdx = lineSegmenter.getLineIndex(maxY)
+        if (startLineIdx != endLineIdx) return false
+
+        val corners = findCorners(stroke.points, minAngle = 60f)
+        if (corners.size < 2) return false
+
+        // Use the first two corners to define 4 key points
+        val p0 = stroke.points.first()
+        val p1 = stroke.points[corners[0]]
+        val p2 = stroke.points[corners[1]]
+        val p3 = stroke.points.last()
+
+        val margin = 0.15f
+
+        // Pattern A (left-to-right): top-right → bottom-left → top-left → bottom-right
+        val patternA = p0.y < p1.y - yRange * margin &&
+            p0.x > p1.x + xRange * margin &&
+            p2.y < p1.y - yRange * margin &&
+            p3.y > p2.y + yRange * margin &&
+            p3.x > p2.x + xRange * margin
+
+        // Pattern B (right-to-left mirror): top-left → bottom-right → top-right → bottom-left
+        val patternB = p0.y < p1.y - yRange * margin &&
+            p0.x < p1.x - xRange * margin &&
+            p2.y < p1.y - yRange * margin &&
+            p3.y > p2.y + yRange * margin &&
+            p3.x < p2.x - xRange * margin
+
+        return patternA || patternB
+    }
+
+    /**
+     * Find indices of "corner" points where the stroke direction changes
+     * sharply. We smooth the stroke first by subsampling, then measure
+     * the angle at each point between the incoming and outgoing segments.
+     */
+    private fun findCorners(points: List<StrokePoint>, minAngle: Float): List<Int> {
+        // Use a wider lookback/lookahead window to measure direction change.
+        // This avoids missing corners that are rounded over several points.
+        val window = (points.size / 6).coerceIn(3, 20)
+
+        if (points.size < window * 2 + 1) return emptyList()
+
+        val cosThreshold = kotlin.math.cos(Math.toRadians(minAngle.toDouble())).toFloat()
+
+        // Compute angle at each point using vectors from -window to curr and curr to +window
+        data class AngleAt(val index: Int, val angleDeg: Int, val dot: Float)
+        val candidates = mutableListOf<AngleAt>()
+
+        for (i in window until points.size - window) {
+            val prev = points[i - window]
+            val curr = points[i]
+            val next = points[i + window]
+
+            val dx1 = curr.x - prev.x
+            val dy1 = curr.y - prev.y
+            val dx2 = next.x - curr.x
+            val dy2 = next.y - curr.y
+
+            val len1 = kotlin.math.sqrt(dx1 * dx1 + dy1 * dy1)
+            val len2 = kotlin.math.sqrt(dx2 * dx2 + dy2 * dy2)
+            if (len1 < 1f || len2 < 1f) continue
+
+            val dot = (dx1 * dx2 + dy1 * dy2) / (len1 * len2)
+
+            if (dot < cosThreshold) {
+                val angleDeg = Math.toDegrees(kotlin.math.acos(dot.coerceIn(-1f, 1f)).toDouble()).toInt()
+                candidates.add(AngleAt(i, angleDeg, dot))
+            }
+        }
+
+        // Merge nearby candidates — keep the sharpest angle within each cluster
+        val corners = mutableListOf<AngleAt>()
+        val minSeparation = window * 2
+        for (c in candidates) {
+            val last = corners.lastOrNull()
+            if (last != null && c.index - last.index < minSeparation) {
+                // Keep the sharper angle (higher angleDeg)
+                if (c.angleDeg > last.angleDeg) {
+                    corners[corners.lastIndex] = c
+                }
+            } else {
+                corners.add(c)
+            }
+        }
+
+        return corners.map { it.index }
     }
 
     private fun isVerticalLineGesture(stroke: InkStroke): Boolean {
@@ -115,8 +227,8 @@ class GestureHandler(
     }
 
     private fun handleDeleteLine(gestureStroke: InkStroke) {
-        val centroidY = gestureStroke.points.map { it.y }.average().toFloat()
-        val lineIdx = lineSegmenter.getLineIndex(centroidY)
+        val startY = gestureStroke.points.first().y
+        val lineIdx = lineSegmenter.getLineIndex(startY)
 
         val lineStrokes = lineSegmenter.getStrokesForLine(documentModel.activeStrokes, lineIdx)
         val idsToRemove = lineStrokes.map { it.strokeId }.toMutableSet()

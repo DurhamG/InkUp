@@ -80,15 +80,19 @@ object TutorialContent {
             TextAnnotation("Strike through to delete words", 560f, strikeY + 10f, red, 32f)
         )
 
-        // --- Line 3: Delete line demo ---
+        // --- Line 3: Delete line demo (X gesture) ---
         strokes.addAll(textToStrokes("Once upon a time", 60f, baseline(3), 64f))
 
-        // Red line covering right third of screen, extending past gutter
-        val deleteY = baseline(3) - 22f
-        val deleteStartX = writingWidth * 2f / 3f
-        annotations.add(makeLine(deleteStartX, deleteY, writingWidth + 40f, deleteY, red, 5f))
+        // Red X gesture: two crossing diagonals
+        val xCenterX = 580f
+        val xCenterY = baseline(3) - 22f
+        val xSize = 28f
+        // First diagonal: top-left to bottom-right
+        annotations.add(makeLine(xCenterX - xSize, xCenterY - xSize, xCenterX + xSize, xCenterY + xSize, red, 5f))
+        // Second diagonal: top-right to bottom-left
+        annotations.add(makeLine(xCenterX + xSize, xCenterY - xSize, xCenterX - xSize, xCenterY + xSize, red, 5f))
         textAnnotations.add(
-            TextAnnotation("Extend to gutter to delete line", deleteStartX + 20f, deleteY - 20f, red, 32f)
+            TextAnnotation("Draw X to delete entire line", xCenterX + xSize + 20f, xCenterY + 10f, red, 32f)
         )
 
         // --- Lines 4-6: Insert line demo (two vertical lines) ---
