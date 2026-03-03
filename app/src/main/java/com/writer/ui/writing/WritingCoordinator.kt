@@ -68,6 +68,16 @@ class WritingCoordinator(
         inkCanvas.onIdleTimeout = { onIdle() }
         inkCanvas.onManualScroll = { displayHiddenLines() }
         textView.onTextTap = { lineIndex -> scrollToLine(lineIndex) }
+        inkCanvas.onUndoGestureStart = {
+            undoManager.beginScrub(currentSnapshot())
+        }
+        inkCanvas.onUndoGestureStep = step@{ offset ->
+            val snapshot = undoManager.scrubTo(offset) ?: return@step
+            applySnapshot(snapshot)
+        }
+        inkCanvas.onUndoGestureEnd = {
+            undoManager.endScrub()
+        }
     }
 
     fun stop() {
@@ -76,6 +86,9 @@ class WritingCoordinator(
         inkCanvas.onIdleTimeout = null
         inkCanvas.onManualScroll = null
         textView.onTextTap = null
+        inkCanvas.onUndoGestureStart = null
+        inkCanvas.onUndoGestureStep = null
+        inkCanvas.onUndoGestureEnd = null
     }
 
     fun reset() {

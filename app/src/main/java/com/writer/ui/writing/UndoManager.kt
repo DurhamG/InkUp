@@ -40,4 +40,39 @@ class UndoManager(private val maxHistory: Int = 50) {
         undoStack.clear()
         redoStack.clear()
     }
+
+    // --- Scrub API for gesture-based undo/redo ---
+
+    private var scrubTimeline: List<Snapshot>? = null
+    private var scrubStartIndex: Int = 0
+    private var scrubCurrentIndex: Int = 0
+
+    fun beginScrub(current: Snapshot) {
+        // Timeline: [oldest_undo, ..., newest_undo, current, nearest_redo, ..., furthest_redo]
+        val timeline = undoStack.toList() + current + redoStack.reversed()
+        scrubTimeline = timeline
+        scrubStartIndex = undoStack.size  // index of current in the timeline
+        scrubCurrentIndex = scrubStartIndex
+    }
+
+    fun scrubTo(absoluteOffset: Int): Snapshot? {
+        val timeline = scrubTimeline ?: return null
+        val targetIndex = (scrubStartIndex + absoluteOffset).coerceIn(0, timeline.lastIndex)
+        if (targetIndex == scrubCurrentIndex) return null
+        scrubCurrentIndex = targetIndex
+        return timeline[targetIndex]
+    }
+
+    fun endScrub() {
+        val timeline = scrubTimeline ?: return
+        undoStack.clear()
+        for (i in 0 until scrubCurrentIndex) {
+            undoStack.addLast(timeline[i])
+        }
+        redoStack.clear()
+        for (i in timeline.lastIndex downTo scrubCurrentIndex + 1) {
+            redoStack.addLast(timeline[i])
+        }
+        scrubTimeline = null
+    }
 }

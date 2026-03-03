@@ -139,15 +139,33 @@ object TutorialContent {
             TextAnnotation("Draw ↓ to insert below", vertDownX + 30f, (vertDownStart + vertDownEnd) / 2f + 8f, green, 32f)
         )
 
-        // Upward vertical line (draw ↑ to insert above)
-        val vertUpX = 850f
+        // Upward vertical line (draw ↑ to insert above) — 35px left of the down arrow
+        val vertUpX = vertDownX - 35f
         val vertUpMid = baseline(9) - 10f
         val vertUpEnd = vertUpMid - LINE_SPACING * 1.5f
         annotations.add(makeLine(vertUpX, vertUpMid, vertUpX, vertUpEnd, green, 5f))
         annotations.add(makeLine(vertUpX - 12f, vertUpEnd + 20f, vertUpX, vertUpEnd, green, 4f))
         annotations.add(makeLine(vertUpX + 12f, vertUpEnd + 20f, vertUpX, vertUpEnd, green, 4f))
         textAnnotations.add(
-            TextAnnotation("Draw ↑ to insert above", vertUpX + 30f, (vertUpMid + vertUpEnd) / 2f + 8f, green, 32f)
+            TextAnnotation("Draw ↑ to insert above", vertUpX + 30f, (vertUpMid + vertUpEnd) / 2f + 8f + LINE_SPACING / 2f, green, 32f)
+        )
+
+        // --- Undo/redo gesture demo: down-then-left arrow ---
+        val undoStartY = xCenterY  // same Y as the X gesture
+        val undoDownLen = 2f * LINE_SPACING
+        val undoLeftLen = undoDownLen
+        val undoX = writingWidth - 140f  // far right of writing surface
+        val undoCornerY = undoStartY + undoDownLen - 25f
+        val undoEndX = undoX - undoLeftLen
+        // Vertical segment (down)
+        annotations.add(makeLine(undoX, undoStartY - 25f, undoX, undoCornerY, blue, 5f))
+        // Horizontal segment (left)
+        annotations.add(makeLine(undoX, undoCornerY, undoEndX, undoCornerY, blue, 5f))
+        // Arrowhead at end of horizontal segment
+        annotations.add(makeLine(undoEndX + 20f, undoCornerY - 12f, undoEndX, undoCornerY, blue, 4f))
+        annotations.add(makeLine(undoEndX + 20f, undoCornerY + 12f, undoEndX, undoCornerY, blue, 4f))
+        textAnnotations.add(
+            TextAnnotation("Down then left/right for undo/redo", (undoX + undoEndX) / 2f, undoCornerY + 41f, blue, 32f, centered = true)
         )
 
         // --- Auto-scroll hint between delete and insert demos ---
