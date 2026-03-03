@@ -437,6 +437,15 @@ class WritingActivity : AppCompatActivity() {
         popup.showAtLocation(recognizedTextView, Gravity.NO_GRAVITY, x, y)
     }
 
+    override fun onResume() {
+        super.onResume()
+        // Reinitialize Onyx SDK to clear stale system-level state from other apps
+        // (e.g. toolbar exclude rects that persist across app switches)
+        if (!tutorialManager.isActive) {
+            inkCanvas.reinitializeRawDrawing()
+        }
+    }
+
     override fun onStop() {
         super.onStop()
         saveDocument()

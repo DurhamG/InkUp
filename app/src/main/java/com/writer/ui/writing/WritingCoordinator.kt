@@ -10,6 +10,8 @@ import com.writer.view.HandwritingCanvasView
 import com.writer.view.RecognizedTextView
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
@@ -26,9 +28,11 @@ class WritingCoordinator(
         // Scroll when writing passes this fraction of canvas height from top
         // 25% of canvas ≈ 50% of full screen (since canvas is 75% of screen)
         private const val SCROLL_THRESHOLD = 0.25f
-        // A line indented more than 15% from the left starts a new paragraph
-        private const val INDENT_THRESHOLD = 0.15f
+        // A line indented more than ~10% from the left starts a new paragraph
+        private const val INDENT_THRESHOLD = 0.105f
         private val GUTTER_WIDTH = HandwritingCanvasView.GUTTER_WIDTH
+        // Delay before refreshing e-ink display after text view updates
+        private const val TEXT_REFRESH_DELAY_MS = 500L
     }
 
     private val lineSegmenter = LineSegmenter()
@@ -61,6 +65,8 @@ class WritingCoordinator(
     private var scrollAnimating = false
     // Track which line the user is currently writing on
     private var currentLineIndex = -1
+    // Deferred e-ink refresh for text view updates (avoids interrupting active writing)
+    private var textRefreshJob: Job? = null
 
     fun start() {
         Log.i(TAG, "Coordinator started")
@@ -82,6 +88,7 @@ class WritingCoordinator(
 
     fun stop() {
         scrollAnimating = false
+        textRefreshJob?.cancel()
         inkCanvas.onStrokeCompleted = null
         inkCanvas.onIdleTimeout = null
         inkCanvas.onManualScroll = null
@@ -93,6 +100,7 @@ class WritingCoordinator(
 
     fun reset() {
         scrollAnimating = false
+        textRefreshJob?.cancel()
         lineTextCache.clear()
         recognizingLines.clear()
         pendingRerecognize.clear()
@@ -102,6 +110,7 @@ class WritingCoordinator(
     }
 
     private fun onStrokeCompleted(stroke: InkStroke) {
+        textRefreshJob?.cancel()
         if (gestureHandler.tryHandle(stroke)) return
 
         saveUndoSnapshot()
@@ -212,10 +221,7 @@ class WritingCoordinator(
 
                 withContext(Dispatchers.Main) {
                     displayHiddenLines()
-                    // Force e-ink refresh
-                    inkCanvas.pauseRawDrawing()
-                    inkCanvas.drawToSurface()
-                    inkCanvas.resumeRawDrawing()
+                    scheduleTextRefresh()
                 }
 
                 if (lineIndex in pendingRerecognize) {
@@ -319,6 +325,18 @@ class WritingCoordinator(
             inkCanvas.resumeRawDrawing()
             scrollAnimating = false
             displayHiddenLines()
+        }
+    }
+
+    /** Schedule a deferred e-ink refresh so text view updates become visible.
+     *  Cancelled if a new stroke arrives, so we never interrupt active writing. */
+    private fun scheduleTextRefresh() {
+        textRefreshJob?.cancel()
+        textRefreshJob = scope.launch(Dispatchers.Main) {
+            delay(TEXT_REFRESH_DELAY_MS)
+            inkCanvas.pauseRawDrawing()
+            inkCanvas.drawToSurface()
+            inkCanvas.resumeRawDrawing()
         }
     }
 

@@ -208,6 +208,7 @@ class HandwritingCanvasView @JvmOverloads constructor(
         } catch (e: Exception) {
             Log.w(TAG, "Error closing Onyx SDK: ${e.message}")
         }
+        useOnyxSdk = false
     }
 
     private fun tryInitOnyx() {
@@ -596,6 +597,22 @@ class HandwritingCanvasView @JvmOverloads constructor(
         if (useOnyxSdk) return
         tryInitOnyx()
         drawToSurface()
+    }
+
+    /** Fully close and reopen the SDK to reset internal state (e.g. after canvas resize). */
+    fun reinitializeRawDrawing() {
+        if (useOnyxSdk) {
+            try {
+                touchHelper?.closeRawDrawing()
+                useOnyxSdk = false
+            } catch (e: Exception) {
+                Log.w(TAG, "Error closing SDK for reinit: ${e.message}")
+            }
+        }
+        if (surfaceReady) {
+            tryInitOnyx()
+            drawToSurface()
+        }
     }
 
     /** Pause Onyx SDK raw drawing (needed before scrolling/screen refresh). */

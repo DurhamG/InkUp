@@ -157,8 +157,8 @@ class TutorialManager(
         // Clear close button handler
         textView.onCloseTutorialTap = null
 
-        // Resume raw drawing
-        inkCanvas.resumeRawDrawing()
+        // Fully reinitialize SDK — canvas resized, so SDK needs fresh state
+        inkCanvas.reinitializeRawDrawing()
 
         // Clean up saved state
         savedStrokes = null
