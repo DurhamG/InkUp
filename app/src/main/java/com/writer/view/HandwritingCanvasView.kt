@@ -48,9 +48,13 @@ class HandwritingCanvasView @JvmOverloads constructor(
         private const val LINE_DRAG_MIN_SPANS = 1f
         // Line-drag gesture: max horizontal drift ratio during activation
         private const val LINE_DRAG_MAX_DRIFT = 0.3f
-        // Undo scrub: horizontal distance to transition from line-drag to undo
-        private const val UNDO_HORIZONTAL_THRESHOLD = 50f
-        // Undo scrub: horizontal pixels per undo/redo step
+        // Undo gesture: minimum horizontal span to detect initial stroke
+        private const val UNDO_HORIZONTAL_MIN_SPANS = 1.5f
+        // Undo gesture: max vertical drift ratio during horizontal stroke
+        private const val UNDO_MAX_VERTICAL_DRIFT = 0.2f
+        // Undo gesture: vertical span (in line spacings) to activate after horizontal stroke
+        private const val UNDO_VERTICAL_ACTIVATION = 0.75f
+        // Undo scrub: vertical pixels per undo/redo step
         private const val UNDO_STEP_SIZE = 20f
     }
 
@@ -92,7 +96,7 @@ class HandwritingCanvasView @JvmOverloads constructor(
     var onLineDragStep: ((shiftLines: Int) -> Unit)? = null
     var onLineDragEnd: (() -> Unit)? = null
 
-    // Undo scrub callbacks (activated by horizontal movement during line-drag)
+    // Undo scrub callbacks (horizontal stroke then vertical movement)
     var onUndoGestureStart: (() -> Unit)? = null
     var onUndoGestureStep: ((absoluteOffset: Int) -> Unit)? = null
     var onUndoGestureEnd: (() -> Unit)? = null
@@ -107,12 +111,13 @@ class HandwritingCanvasView @JvmOverloads constructor(
     // Line-drag gesture state
     private var lineDragActive = false
     private var lineDragStartScreenY = 0f
-    private var lineDragActivationX = 0f
     private var lineDragLastShift = 0
 
-    // Undo scrub state (phase 2: activated by horizontal movement during line-drag)
+    // Undo gesture state: horizontal stroke → vertical scrub
+    private var undoGestureReady = false
+    private var undoReadyScreenY = 0f
     private var undoScrubActive = false
-    private var undoScrubTriggerX = 0f
+    private var undoScrubTriggerY = 0f
     private var undoScrubLastStep = 0
 
     private val idleRunnable = Runnable { onIdleTimeout?.invoke() }
@@ -131,17 +136,18 @@ class HandwritingCanvasView @JvmOverloads constructor(
             currentStrokePoints.clear()
             currentStrokePoints.add(tp.toDocStrokePoint())
             lineDragActive = false
+            undoGestureReady = false
             undoScrubActive = false
         }
 
         override fun onRawDrawingTouchPointMoveReceived(tp: TouchPoint) {
-            if (lineDragActive || undoScrubActive) {
+            if (lineDragActive || undoGestureReady || undoScrubActive) {
                 // SDK buffer dump after we disabled it — ignore.
                 // Real movement comes via onTouchEvent now.
                 return
             }
             currentStrokePoints.add(tp.toDocStrokePoint())
-            checkLineDragGesture(tp.x, tp.y)
+            checkGestures(tp.x, tp.y)
         }
 
         override fun onRawDrawingTouchPointListReceived(tpl: TouchPointList) {
@@ -149,8 +155,8 @@ class HandwritingCanvasView @JvmOverloads constructor(
         }
 
         override fun onEndRawDrawing(b: Boolean, tp: TouchPoint) {
-            Log.d(TAG, "onEndRawDrawing: ${currentStrokePoints.size} points, lineDrag=$lineDragActive, undoScrub=$undoScrubActive")
-            if (lineDragActive || undoScrubActive) {
+            Log.d(TAG, "onEndRawDrawing: ${currentStrokePoints.size} points, lineDrag=$lineDragActive, undoReady=$undoGestureReady, undoScrub=$undoScrubActive")
+            if (lineDragActive || undoGestureReady || undoScrubActive) {
                 // SDK fires this when disabled mid-stroke (buffer dump).
                 // Ignore it — the real pen-up comes via onTouchEvent.
                 Log.d(TAG, "Ignoring SDK onEndRawDrawing during interactive gesture")
@@ -260,8 +266,8 @@ class HandwritingCanvasView @JvmOverloads constructor(
         if (lineDragActive) {
             return handleLineDragTouch(event)
         }
-        if (undoScrubActive) {
-            return handleUndoScrubTouch(event)
+        if (undoGestureReady || undoScrubActive) {
+            return handleUndoTouch(event)
         }
 
         // In tutorial mode, block all writing input but allow gutter (handled above)
@@ -284,6 +290,7 @@ class HandwritingCanvasView @JvmOverloads constructor(
                 currentPath.moveTo(x, y)
                 currentStrokePoints.add(StrokePoint(x, y, pressure, timestamp))
                 lineDragActive = false
+                undoGestureReady = false
                 undoScrubActive = false
                 drawToSurface()
                 return true
@@ -299,8 +306,8 @@ class HandwritingCanvasView @JvmOverloads constructor(
                 }
                 currentPath.lineTo(x, y)
                 currentStrokePoints.add(StrokePoint(x, y, pressure, timestamp))
-                checkLineDragGestureFallback(event.x, event.y)
-                if (lineDragActive || undoScrubActive) return true
+                checkGesturesFallback(event.x, event.y)
+                if (lineDragActive || undoGestureReady || undoScrubActive) return true
                 drawToSurface()
                 return true
             }
@@ -309,8 +316,8 @@ class HandwritingCanvasView @JvmOverloads constructor(
                     endLineDrag()
                     return true
                 }
-                if (undoScrubActive) {
-                    endUndoScrub()
+                if (undoGestureReady || undoScrubActive) {
+                    endUndoGesture()
                     return true
                 }
                 currentPath.lineTo(x, y)
@@ -368,14 +375,15 @@ class HandwritingCanvasView @JvmOverloads constructor(
         currentPath.reset()
     }
 
-    // --- Line-drag gesture detection ---
+    // --- Gesture detection ---
 
     /**
-     * Check if the in-progress stroke qualifies as a line-drag gesture.
+     * Check if the in-progress stroke qualifies as a gesture.
      * Called during Onyx SDK move events with screen-space coordinates.
+     * Detects vertical strokes (line-drag) and horizontal strokes (undo).
      */
-    private fun checkLineDragGesture(screenX: Float, screenY: Float) {
-        if (lineDragActive || undoScrubActive) return
+    private fun checkGestures(screenX: Float, screenY: Float) {
+        if (lineDragActive || undoGestureReady || undoScrubActive) return
         if (currentStrokePoints.size < 3) return
 
         val first = currentStrokePoints.first()
@@ -383,29 +391,42 @@ class HandwritingCanvasView @JvmOverloads constructor(
         val yDelta = last.y - first.y
         val absYDelta = kotlin.math.abs(yDelta)
         val xRange = currentStrokePoints.maxOf { it.x } - currentStrokePoints.minOf { it.x }
+        val yRange = currentStrokePoints.maxOf { it.y } - currentStrokePoints.minOf { it.y }
 
+        // Vertical stroke → line-drag
         if (absYDelta > LINE_DRAG_MIN_SPANS * LINE_SPACING && xRange < absYDelta * LINE_DRAG_MAX_DRIFT) {
             activateLineDrag(screenX, screenY)
+            return
+        }
+
+        // Horizontal stroke → undo ready
+        if (xRange > UNDO_HORIZONTAL_MIN_SPANS * LINE_SPACING && yRange < xRange * UNDO_MAX_VERTICAL_DRIFT) {
+            activateUndoReady(screenY)
         }
     }
 
     /**
      * Fallback version for non-Onyx touch path. Also handles in-progress
-     * step updates for both line-drag and undo-scrub inline.
+     * step updates for active gestures inline.
      */
-    private fun checkLineDragGestureFallback(screenX: Float, screenY: Float) {
+    private fun checkGesturesFallback(screenX: Float, screenY: Float) {
         if (undoScrubActive) {
-            // Already in undo scrub — process horizontal movement
-            val steps = ((screenX - undoScrubTriggerX) / UNDO_STEP_SIZE).toInt()
+            // Already in undo scrub — process vertical movement
+            val steps = ((screenY - undoScrubTriggerY) / UNDO_STEP_SIZE).toInt()
             if (steps != undoScrubLastStep) {
                 onUndoGestureStep?.invoke(steps)
                 undoScrubLastStep = steps
             }
             return
         }
+        if (undoGestureReady) {
+            // Waiting for vertical activation
+            processUndoReadyMove(screenY)
+            return
+        }
         if (lineDragActive) {
-            // Already in line-drag — process vertical movement + check horizontal
-            processLineDragMove(screenX, screenY)
+            // Already in line-drag — process vertical movement
+            processLineDragMove(screenY)
             return
         }
         if (currentStrokePoints.size < 3) return
@@ -415,15 +436,22 @@ class HandwritingCanvasView @JvmOverloads constructor(
         val yDelta = last.y - first.y
         val absYDelta = kotlin.math.abs(yDelta)
         val xRange = currentStrokePoints.maxOf { it.x } - currentStrokePoints.minOf { it.x }
+        val yRange = currentStrokePoints.maxOf { it.y } - currentStrokePoints.minOf { it.y }
 
+        // Vertical stroke → line-drag
         if (absYDelta > LINE_DRAG_MIN_SPANS * LINE_SPACING && xRange < absYDelta * LINE_DRAG_MAX_DRIFT) {
             activateLineDrag(screenX, screenY)
+            return
+        }
+
+        // Horizontal stroke → undo ready
+        if (xRange > UNDO_HORIZONTAL_MIN_SPANS * LINE_SPACING && yRange < xRange * UNDO_MAX_VERTICAL_DRIFT) {
+            activateUndoReady(screenY)
         }
     }
 
     private fun activateLineDrag(screenX: Float, screenY: Float) {
         lineDragActive = true
-        lineDragActivationX = screenX
 
         val anchorDocY = currentStrokePoints.first().y
         val anchorLine = ((anchorDocY - TOP_MARGIN) / LINE_SPACING).toInt().coerceAtLeast(0)
@@ -456,7 +484,7 @@ class HandwritingCanvasView @JvmOverloads constructor(
     private fun handleLineDragTouch(event: MotionEvent): Boolean {
         when (event.action) {
             MotionEvent.ACTION_MOVE -> {
-                processLineDragMove(event.x, event.y)
+                processLineDragMove(event.y)
                 return true
             }
             MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
@@ -467,34 +495,13 @@ class HandwritingCanvasView @JvmOverloads constructor(
         return true
     }
 
-    private fun processLineDragMove(screenX: Float, screenY: Float) {
-        // Check for horizontal transition to undo scrub
-        if (kotlin.math.abs(screenX - lineDragActivationX) > UNDO_HORIZONTAL_THRESHOLD) {
-            transitionToUndoScrub(screenX)
-            return
-        }
-
-        // Compute vertical shift in line counts
+    private fun processLineDragMove(screenY: Float) {
         val delta = screenY - lineDragStartScreenY
         val shiftLines = kotlin.math.floor(delta / LINE_SPACING).toInt()
         if (shiftLines != lineDragLastShift) {
             lineDragLastShift = shiftLines
             onLineDragStep?.invoke(shiftLines)
         }
-    }
-
-    private fun transitionToUndoScrub(screenX: Float) {
-        // End line-drag phase (revert line shifts)
-        onLineDragEnd?.invoke()
-        lineDragActive = false
-
-        // Begin undo scrub phase
-        undoScrubActive = true
-        undoScrubTriggerX = screenX
-        undoScrubLastStep = 0
-
-        onUndoGestureStart?.invoke()
-        Log.i(TAG, "Transitioned from line-drag to undo scrub at x=$screenX")
     }
 
     private fun endLineDrag() {
@@ -507,34 +514,77 @@ class HandwritingCanvasView @JvmOverloads constructor(
         Log.i(TAG, "Line-drag ended")
     }
 
-    // --- Undo scrub (phase 2 of vertical gesture) ---
+    // --- Undo gesture (horizontal stroke → vertical scrub) ---
 
-    private fun handleUndoScrubTouch(event: MotionEvent): Boolean {
+    private fun activateUndoReady(screenY: Float) {
+        undoGestureReady = true
+        undoReadyScreenY = screenY
+
+        currentStrokePoints.clear()
+        currentPath.reset()
+
+        // Disable SDK so onTouchEvent receives subsequent move/up events
+        if (useOnyxSdk) {
+            try {
+                touchHelper?.setRawDrawingEnabled(false)
+            } catch (e: Exception) {
+                Log.w(TAG, "Error disabling SDK for undo gesture: ${e.message}")
+            }
+        }
+        Log.i(TAG, "Undo gesture ready (horizontal stroke detected), screenY=$screenY")
+    }
+
+    private fun handleUndoTouch(event: MotionEvent): Boolean {
         when (event.action) {
             MotionEvent.ACTION_MOVE -> {
-                val steps = ((event.x - undoScrubTriggerX) / UNDO_STEP_SIZE).toInt()
-                if (steps != undoScrubLastStep) {
-                    undoScrubLastStep = steps
-                    onUndoGestureStep?.invoke(steps)
+                if (undoScrubActive) {
+                    val steps = ((event.y - undoScrubTriggerY) / UNDO_STEP_SIZE).toInt()
+                    if (steps != undoScrubLastStep) {
+                        undoScrubLastStep = steps
+                        onUndoGestureStep?.invoke(steps)
+                    }
+                } else {
+                    processUndoReadyMove(event.y)
                 }
                 return true
             }
             MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
-                endUndoScrub()
+                endUndoGesture()
                 return true
             }
         }
         return true
     }
 
-    private fun endUndoScrub() {
+    private fun processUndoReadyMove(screenY: Float) {
+        if (kotlin.math.abs(screenY - undoReadyScreenY) > UNDO_VERTICAL_ACTIVATION * LINE_SPACING) {
+            // Activate undo scrub
+            undoScrubActive = true
+            undoScrubTriggerY = undoReadyScreenY
+            undoScrubLastStep = 0
+            onUndoGestureStart?.invoke()
+            // Process the initial step immediately
+            val steps = ((screenY - undoScrubTriggerY) / UNDO_STEP_SIZE).toInt()
+            if (steps != 0) {
+                undoScrubLastStep = steps
+                onUndoGestureStep?.invoke(steps)
+            }
+            Log.i(TAG, "Undo scrub activated at screenY=$screenY")
+        }
+    }
+
+    private fun endUndoGesture() {
+        val wasActive = undoScrubActive
+        undoGestureReady = false
         undoScrubActive = false
         undoScrubLastStep = 0
         currentStrokePoints.clear()
         currentPath.reset()
-        onUndoGestureEnd?.invoke()
+        if (wasActive) {
+            onUndoGestureEnd?.invoke()
+        }
         finishInteractiveGesture()
-        Log.i(TAG, "Undo scrub ended")
+        Log.i(TAG, "Undo gesture ended (wasActive=$wasActive)")
     }
 
     /** Common cleanup after any interactive gesture (line-drag or undo scrub). */
