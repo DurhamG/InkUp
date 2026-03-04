@@ -46,6 +46,19 @@
             box-shadow: 0 4px 24px rgba(0, 0, 0, 0.08);
         }
 
+        .intro {
+            max-width: 640px;
+            margin: 0 auto;
+            padding: 0 24px 48px;
+            text-align: center;
+        }
+
+        .intro p {
+            font-size: 1.1rem;
+            line-height: 1.7;
+            color: #444;
+        }
+
         .features {
             max-width: 640px;
             margin: 0 auto;
@@ -60,13 +73,31 @@
             text-align: center;
         }
 
+        .features h3 {
+            font-size: 1.15rem;
+            font-weight: 600;
+            margin: 32px 0 8px;
+        }
+
+        .features h3:first-of-type {
+            margin-top: 0;
+        }
+
+        .features p {
+            font-size: 1.05rem;
+            line-height: 1.6;
+            color: #444;
+            margin-bottom: 4px;
+        }
+
         .features ul {
             list-style: none;
             padding: 0;
+            margin: 8px 0 0;
         }
 
         .features li {
-            padding: 12px 0;
+            padding: 8px 0;
             border-bottom: 1px solid #eee;
             font-size: 1.05rem;
             line-height: 1.5;
@@ -104,21 +135,56 @@
         </div>
     </div>
 
+    <div class="intro">
+        <p>
+            I made InkUp because I just wanted to write. No menus, no toolbars, no page turns,
+            no fussing with settings. Just put pen to paper and have a well-formatted document
+            appear.
+        </p>
+    </div>
+
     <div class="features">
         <h2>How it works</h2>
+
+        <h3>Write and watch it appear</h3>
+        <p>
+            Your handwriting is recognized as you go. As lines scroll up off the writing area,
+            they appear as clean, formatted text above. You always see your recent handwriting
+            below and the finished document above.
+        </p>
+
+        <h3>Auto-scroll</h3>
+        <p>
+            As you write toward the bottom of the screen, pause and the page scrolls up automatically.
+            You never need to touch a scroll bar or turn a page. Just keep writing.
+        </p>
+
+        <h3>Editing gestures</h3>
+        <p>Everything is done with the pen. No buttons, no menus.</p>
         <ul>
-            <li><strong>Just write.</strong> Your handwriting is recognized in real time and rendered as formatted text.</li>
-            <li><strong>Strike through</strong> words to delete them. Draw an <strong>X</strong> to remove an entire line.</li>
-            <li><strong>Draw a vertical line</strong> to insert a blank line above or below.</li>
-            <li><strong>Underline</strong> a word to make it a heading.</li>
-            <li><strong>Draw a dash</strong> before your text to create a bulleted list item.</li>
-            <li><strong>Auto-scroll</strong> kicks in as you write toward the bottom.</li>
-            <li><strong>Export as markdown</strong> to share your notes anywhere.</li>
+            <li><strong>Strike through</strong> words to delete them.</li>
+            <li><strong>Drag down</strong> on a line to push it down and insert blank lines above.</li>
+            <li><strong>Drag up</strong> on a line to pull it up, removing lines above.</li>
+            <li><strong>Draw horizontally</strong> then move up or down to undo and redo.</li>
         </ul>
+
+        <h3>Formatting</h3>
+        <p>Structure your document with simple conventions:</p>
+        <ul>
+            <li><strong>Underline</strong> a line to make it a heading.</li>
+            <li><strong>Draw a dash</strong> before text to create a list item.</li>
+            <li><strong>Indent</strong> a line to start a new paragraph.</li>
+            <li>Consecutive lines are joined into paragraphs automatically.</li>
+        </ul>
+
+        <h3>Export</h3>
+        <p>
+            Export your document as markdown to share or edit anywhere.
+        </p>
     </div>
 
     <footer>
-        <a href="https://github.com/durham-goode/writer">View on GitHub</a>
+        <a href="https://github.com/DurhamG/InkUp">Share comments or issues on GitHub</a>
     </footer>
 </body>
 </html>
