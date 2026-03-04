@@ -154,13 +154,16 @@ class WritingActivity : AppCompatActivity() {
         }
 
         // Initialize recognizer in the background
-        recognizedTextView.statusMessage = "Loading..."
+        recognizedTextView.statusMessage = "Loading handwriting recognition model..."
+        recognizedTextView.statusSubtext = "This may take a minute (~20 MB download)"
         lifecycleScope.launch {
             try {
                 recognizer.initialize(documentModel.language)
                 recognizedTextView.statusMessage = ""
+                recognizedTextView.statusSubtext = ""
+                coordinator?.recognizeAllLines()
             } catch (e: Exception) {
-                recognizedTextView.statusMessage = "Error"
+                recognizedTextView.statusMessage = "Error loading model"
                 Toast.makeText(
                     this@WritingActivity,
                     "Failed to load recognition model: ${e.message}",

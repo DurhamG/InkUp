@@ -104,6 +104,9 @@ class HandwritingCanvasView @JvmOverloads constructor(
     /** Scroll offset in document-space pixels. Increase to scroll content up. */
     var scrollOffsetY: Float = 0f
 
+    /** Extra scroll past the top of the document, for scrolling the text view. */
+    var textOverscroll: Float = 0f
+
     // Gutter scrolling state
     private var isGutterDragging = false
     private var gutterDragLastY = 0f
@@ -355,7 +358,18 @@ class HandwritingCanvasView @JvmOverloads constructor(
                 if (!isGutterDragging) return false
                 val dy = gutterDragLastY - event.y  // drag up = positive = scroll down
                 gutterDragLastY = event.y
-                scrollOffsetY = (scrollOffsetY + dy).coerceAtLeast(0f)
+                if (textOverscroll > 0f && dy > 0f) {
+                    // Scrolling back down — reduce text overscroll first
+                    textOverscroll = (textOverscroll - dy).coerceAtLeast(0f)
+                } else {
+                    val raw = scrollOffsetY + dy
+                    if (raw < 0f) {
+                        scrollOffsetY = 0f
+                        textOverscroll = (textOverscroll - raw).coerceAtLeast(0f)
+                    } else {
+                        scrollOffsetY = raw
+                    }
+                }
                 drawToSurface()
                 onManualScroll?.invoke()
                 return true
@@ -363,7 +377,9 @@ class HandwritingCanvasView @JvmOverloads constructor(
             MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
                 if (!isGutterDragging) return false
                 isGutterDragging = false
-                scrollOffsetY = snapToLine(scrollOffsetY)
+                if (textOverscroll == 0f) {
+                    scrollOffsetY = snapToLine(scrollOffsetY)
+                }
                 drawToSurface()
                 if (!tutorialMode) resumeRawDrawing()
                 onManualScroll?.invoke()
@@ -779,6 +795,7 @@ class HandwritingCanvasView @JvmOverloads constructor(
         currentStrokePoints.clear()
         currentPath.reset()
         scrollOffsetY = 0f
+        textOverscroll = 0f
         handler.removeCallbacks(idleRunnable)
         drawToSurface()
     }

@@ -65,8 +65,15 @@ class RecognizedTextView @JvmOverloads constructor(
     }
 
     private val statusPaint = TextPaint().apply {
+        color = Color.parseColor("#555555")
+        textSize = 48f
+        isAntiAlias = true
+        textAlign = Paint.Align.CENTER
+    }
+
+    private val statusSubtextPaint = TextPaint().apply {
         color = Color.parseColor("#666666")
-        textSize = 28f
+        textSize = 34f
         isAntiAlias = true
         textAlign = Paint.Align.CENTER
     }
@@ -131,8 +138,15 @@ class RecognizedTextView @JvmOverloads constructor(
     /** Called when the user taps on a text segment. Passes the written lineIndex. */
     var onTextTap: ((Int) -> Unit)? = null
 
-    /** Status message shown in the gutter below the logo (e.g. "Loading model..."). */
+    /** Status message shown centered in the content area. */
     var statusMessage: String = ""
+        set(value) {
+            field = value
+            invalidate()
+        }
+
+    /** Subtext shown below the status message. */
+    var statusSubtext: String = ""
         set(value) {
             field = value
             invalidate()
@@ -414,8 +428,16 @@ class RecognizedTextView @JvmOverloads constructor(
         val gutterLeft = width - GUTTER_WIDTH
         val gutterCenterX = gutterLeft + GUTTER_WIDTH / 2f
 
-        // Draw text content
-        if (staticLayouts.isNotEmpty()) {
+        // Draw text content or status message
+        if (statusMessage.isNotEmpty() && staticLayouts.isEmpty()) {
+            // Draw status message centered in the content area
+            val contentCenterX = (width - GUTTER_WIDTH) / 2f
+            val contentCenterY = height / 2f
+            canvas.drawText(statusMessage, contentCenterX, contentCenterY, statusPaint)
+            if (statusSubtext.isNotEmpty()) {
+                canvas.drawText(statusSubtext, contentCenterX, contentCenterY + 50f, statusSubtextPaint)
+            }
+        } else if (staticLayouts.isNotEmpty()) {
             val baseY = if (tutorialMode) {
                 closeButtonHeight + 5f  // top-align below close button
             } else {
@@ -441,11 +463,6 @@ class RecognizedTextView @JvmOverloads constructor(
         // Draw "I" logo in the top of the gutter
         val logoY = GUTTER_WIDTH * 0.7f
         canvas.drawText("I", gutterCenterX, logoY, logoPaint)
-
-        // Draw status message below logo if present
-        if (statusMessage.isNotEmpty()) {
-            canvas.drawText(statusMessage, gutterCenterX, GUTTER_WIDTH + 32f, statusPaint)
-        }
 
         if (tutorialMode) {
             // "Close Tutorial" button centered at top of text area

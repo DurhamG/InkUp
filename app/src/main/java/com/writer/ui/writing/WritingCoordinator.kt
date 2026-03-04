@@ -81,7 +81,14 @@ class WritingCoordinator(
         Log.i(TAG, "Coordinator started")
         inkCanvas.onStrokeCompleted = { stroke -> onStrokeCompleted(stroke) }
         inkCanvas.onIdleTimeout = { onIdle() }
-        inkCanvas.onManualScroll = { displayHiddenLines() }
+        inkCanvas.onManualScroll = {
+            // Clamp text overscroll so text doesn't scroll completely out of view
+            val maxOverscroll = (textView.totalTextHeight - textView.height).coerceAtLeast(0).toFloat()
+            if (inkCanvas.textOverscroll > maxOverscroll) {
+                inkCanvas.textOverscroll = maxOverscroll
+            }
+            displayHiddenLines()
+        }
         textView.onTextTap = { lineIndex -> scrollToLine(lineIndex) }
         inkCanvas.onLineDragStart = { anchorLine -> onLineDragStart(anchorLine) }
         inkCanvas.onLineDragStep = { shiftLines -> onLineDragStep(shiftLines) }
@@ -158,6 +165,27 @@ class WritingCoordinator(
     }
 
     // --- Recognition ---
+
+    /** Recognize all lines that have strokes but no cached text or failed recognition. */
+    fun recognizeAllLines() {
+        val strokesByLine = lineSegmenter.groupByLine(documentModel.activeStrokes)
+        if (strokesByLine.isEmpty()) return
+        scope.launch {
+            for (lineIndex in strokesByLine.keys.sorted()) {
+                // Re-recognize lines that failed ("[?]") or were never cached
+                val cached = lineTextCache[lineIndex]
+                if (cached != null && cached != "[?]") continue
+                if (recognizingLines.contains(lineIndex)) continue
+                recognizingLines.add(lineIndex)
+                lineTextCache.remove(lineIndex)
+                val text = doRecognizeLine(lineIndex)
+                if (text != null) {
+                    Log.d(TAG, "Post-load recognized line $lineIndex: \"$text\"")
+                    displayHiddenLines()
+                }
+            }
+        }
+    }
 
     private fun eagerRecognizeLine(lineIndex: Int) {
         if (lineTextCache.containsKey(lineIndex)) return
@@ -451,7 +479,7 @@ class WritingCoordinator(
             break
         }
 
-        textView.textScrollOffset = offset
+        textView.textScrollOffset = offset - inkCanvas.textOverscroll
     }
 
     // --- Markdown export ---
