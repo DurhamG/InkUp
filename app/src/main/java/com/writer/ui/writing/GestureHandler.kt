@@ -33,6 +33,8 @@ class GestureHandler(
         private const val STRIKETHROUGH_MIN_WIDTH = 100f
         // Strikethrough: max height-to-width ratio (must be very flat)
         private const val STRIKETHROUGH_MAX_HEIGHT_RATIO = 0.3f
+        // Strikethrough: max path-to-diagonal ratio (must be a straight line)
+        private const val STRIKETHROUGH_MAX_PATH_RATIO = 1.3f
 
         // Underline: must start below this fraction of the line
         private const val UNDERLINE_BOTTOM_FRACTION = 0.8f
@@ -46,7 +48,7 @@ class GestureHandler(
             if (stroke.points.size < 2) return false
             return stroke.xRange >= STRIKETHROUGH_MIN_WIDTH &&
                 stroke.yRange < stroke.xRange * STRIKETHROUGH_MAX_HEIGHT_RATIO &&
-                stroke.pathLength <= stroke.diagonal * SIMPLICITY_MAX_RATIO
+                stroke.pathLength <= stroke.diagonal * STRIKETHROUGH_MAX_PATH_RATIO
         }
     }
 
