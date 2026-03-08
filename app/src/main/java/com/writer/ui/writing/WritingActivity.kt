@@ -301,6 +301,7 @@ class WritingActivity : AppCompatActivity() {
         documentModel.activeStrokes.clear()
         inkCanvas.clear()
         recognizedTextView.setParagraphs(emptyList())
+        recognizedTextView.showScrollHint = true
 
         currentDocumentName = DocumentStorage.generateName(this)
         getSharedPreferences(PREFS_NAME, MODE_PRIVATE).edit()

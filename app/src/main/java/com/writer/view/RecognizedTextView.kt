@@ -73,6 +73,13 @@ class RecognizedTextView @JvmOverloads constructor(
         textAlign = Paint.Align.CENTER
     }
 
+    private val scrollHintPaint = TextPaint().apply {
+        color = Color.parseColor("#999999")
+        textSize = 42f
+        isAntiAlias = true
+        textAlign = Paint.Align.CENTER
+    }
+
     private val statusSubtextPaint = TextPaint().apply {
         color = Color.parseColor("#666666")
         textSize = 34f
@@ -133,6 +140,9 @@ class RecognizedTextView @JvmOverloads constructor(
         val lineIndex: Int
     ) : RenderItem()
 
+
+    /** When true, show "Scroll to turn writing into text" hint. Cleared permanently once text appears. */
+    var showScrollHint = true
 
     /** When true, show tutorial annotations and close button. */
     var tutorialMode = false
@@ -198,6 +208,7 @@ class RecognizedTextView @JvmOverloads constructor(
 
     fun setContent(paragraphs: List<List<TextSegment>>, diagrams: List<DiagramDisplay>) {
         rebuildRenderItems(paragraphs, diagrams)
+        if (!tutorialMode && renderItems.isNotEmpty()) showScrollHint = false
         invalidate()
     }
 
@@ -472,7 +483,7 @@ class RecognizedTextView @JvmOverloads constructor(
         val gutterLeft = width - HandwritingCanvasView.gutterWidth(width)
         val gutterCenterX = gutterLeft + HandwritingCanvasView.gutterWidth(width) / 2f
 
-        // Draw text content or status message
+        // Draw text content or status/hint message
         if (statusMessage.isNotEmpty() && renderItems.isEmpty()) {
             // Draw status message centered in the content area
             val contentCenterX = (width - HandwritingCanvasView.gutterWidth(width)) / 2f
@@ -481,6 +492,10 @@ class RecognizedTextView @JvmOverloads constructor(
             if (statusSubtext.isNotEmpty()) {
                 canvas.drawText(statusSubtext, contentCenterX, contentCenterY + 50f, statusSubtextPaint)
             }
+        } else if (showScrollHint && renderItems.isEmpty() && !tutorialMode) {
+            val contentCenterX = (width - HandwritingCanvasView.gutterWidth(width)) / 2f
+            val contentCenterY = height / 2f
+            canvas.drawText("Scroll to turn writing into text", contentCenterX, contentCenterY, scrollHintPaint)
         } else if (renderItems.isNotEmpty()) {
             val baseY = if (tutorialMode) {
                 closeButtonHeight + 5f  // top-align below close button
