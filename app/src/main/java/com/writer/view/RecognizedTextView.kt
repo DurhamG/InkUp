@@ -539,12 +539,12 @@ class RecognizedTextView @JvmOverloads constructor(
 
             // "Drag gutter to resize" with arrow pointing right toward gutter
             val resizeY = height - 60f
-            val resizeLeft = gutterLeft - 350f
+            val resizeLeft = gutterLeft - 370f
             val resizeRight = gutterLeft - 20f
             canvas.drawLine(resizeLeft, resizeY, resizeRight, resizeY, tutorialAnnotationPaint)
             canvas.drawLine(resizeRight - 20f, resizeY - 12f, resizeRight, resizeY, tutorialAnnotationPaint)
             canvas.drawLine(resizeRight - 20f, resizeY + 12f, resizeRight, resizeY, tutorialAnnotationPaint)
-            canvas.drawText("Drag gutter to resize", resizeLeft, resizeY - 16f, tutorialTextPaint)
+            canvas.drawText("Drag this gutter to resize", resizeLeft - 10f, resizeY - 21f, tutorialTextPaint)
         }
     }
 

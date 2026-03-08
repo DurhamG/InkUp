@@ -5,6 +5,7 @@ import android.graphics.Paint
 import android.graphics.Path
 import android.graphics.PathMeasure
 import android.graphics.Typeface
+import com.writer.model.DiagramArea
 import com.writer.model.InkStroke
 import com.writer.model.StrokePoint
 import com.writer.view.HandwritingCanvasView
@@ -30,7 +31,9 @@ data class TutorialData(
     val textAnnotations: List<TextAnnotation>,
     val scrollOffsetY: Float,
     val textParagraphs: List<List<WritingCoordinator.TextSegment>>,
-    val canvasContentHeight: Float = 0f
+    val canvasContentHeight: Float = 0f,
+    val diagramAreas: List<DiagramArea> = emptyList(),
+    val diagramDisplays: List<WritingCoordinator.DiagramDisplay> = emptyList()
 )
 
 object TutorialContent {
@@ -58,7 +61,7 @@ object TutorialContent {
         fun lineTop(idx: Int): Float = TOP_MARGIN + idx * LINE_SPACING
         fun baseline(idx: Int): Float = TOP_MARGIN + (idx + 1) * LINE_SPACING - 20f
 
-        // All lines (0-9) are visible on the canvas starting from the top.
+        // Lines 0-4: text content, Lines 5-7: diagram area
         // Lines 0-4 also appear rendered in the text view above.
 
         // --- Line 0: Heading "Shopping List" with underline ---
@@ -86,38 +89,34 @@ object TutorialContent {
             strokes.addAll(textToStrokes(text, 140f, baseline(lineIdx), 64f))
         }
 
-        // --- Lines 3-4: Fox text (multi-line concatenation demo) ---
+        // --- Lines 3-4: Fox text with strikethrough on "lazy" ---
         strokes.addAll(textToStrokes("The quick brown fox", 60f, baseline(3), 64f))
         strokes.addAll(textToStrokes("jumps over the lazy dog", 60f, baseline(4), 64f))
 
         // Scroll offset: start at the top so heading is visible
         val scrollOffset = 0f
 
-        // --- Line 5: Strikethrough demo + scroll annotation ---
-        strokes.addAll(textToStrokes("Hello beautiful world", 60f, baseline(5), 64f))
-
-        val strikeY = baseline(5) - 22f
-        annotations.add(makeLine(180f, strikeY, 400f, strikeY, red, 5f))
+        // Strikethrough on "lazy" in line 4
+        val strikeY = baseline(4) - 22f
+        annotations.add(makeLine(395f, strikeY, 500f, strikeY, red, 5f))
         textAnnotations.add(
-            TextAnnotation("Strike through to delete words", 560f, strikeY + 10f, red, 32f)
+            TextAnnotation("Strike through to delete words", 700f, strikeY + 10f, red, 32f)
         )
 
-        // Blue arrow pointing to gutter (on first visible line)
-        val arrowY = lineTop(2) + 40f
-        annotations.addAll(
-            makeArrow(writingWidth - 300f, arrowY, writingWidth - 30f, arrowY, blue)
-        )
+        // --- Gutter scroll hint (top line, matching resize arrow style) ---
+        val scrollHintY = lineTop(0) + LINE_SPACING * 0.4f
+        val scrollHintRight = writingWidth - 20f
+        val scrollHintLeft = writingWidth - 370f
+        annotations.add(makeLine(scrollHintLeft, scrollHintY, scrollHintRight, scrollHintY, blue, 4f))
+        annotations.add(makeLine(scrollHintRight - 20f, scrollHintY - 12f, scrollHintRight, scrollHintY, blue, 4f))
+        annotations.add(makeLine(scrollHintRight - 20f, scrollHintY + 12f, scrollHintRight, scrollHintY, blue, 4f))
         textAnnotations.add(
-            TextAnnotation("Drag in gutter to scroll", writingWidth - 680f, arrowY + 10f, blue, 34f)
+            TextAnnotation("Drag this gutter to scroll", scrollHintLeft.toFloat() - 10f, scrollHintY - 21f, blue, 34f)
         )
 
-        // --- Lines 6-8: Insert line demo ---
-        strokes.addAll(textToStrokes("Line above", 60f, baseline(6), 64f))
-        strokes.addAll(textToStrokes("Line below", 60f, baseline(8), 64f))
-
-        // Downward vertical line (drag ↓ to insert below)
-        val vertDownX = 450f
-        val vertDownStart = lineTop(6) + LINE_SPACING / 2f
+        // --- Insert/delete line demo (right of eggs/bread area, +100px right) ---
+        val vertDownX = 600f
+        val vertDownStart = lineTop(1) + LINE_SPACING / 2f
         val vertDownEnd = vertDownStart + LINE_SPACING * 1.5f - 10f
         annotations.add(makeLine(vertDownX, vertDownStart, vertDownX, vertDownEnd, green, 5f))
         annotations.add(makeLine(vertDownX - 12f, vertDownEnd - 20f, vertDownX, vertDownEnd, green, 4f))
@@ -126,9 +125,8 @@ object TutorialContent {
             TextAnnotation("Drag ↓ to insert below", vertDownX + 30f, (vertDownStart + vertDownEnd) / 2f + 8f, green, 32f)
         )
 
-        // Upward vertical line (drag ↑ to delete above) — 35px left of the down arrow
         val vertUpX = vertDownX - 35f
-        val vertUpMid = baseline(8) - 10f
+        val vertUpMid = baseline(3) - 10f
         val vertUpEnd = vertUpMid - LINE_SPACING * 1.5f
         annotations.add(makeLine(vertUpX, vertUpMid, vertUpX, vertUpEnd, green, 5f))
         annotations.add(makeLine(vertUpX - 12f, vertUpEnd + 20f, vertUpX, vertUpEnd, green, 4f))
@@ -137,8 +135,91 @@ object TutorialContent {
             TextAnnotation("Drag ↑ to delete above", vertUpX + 30f, (vertUpMid + vertUpEnd) / 2f + 8f + LINE_SPACING / 2f, green, 32f)
         )
 
-        // --- Undo/redo gesture demo: right-then-up arrow ---
-        val undoMidY = baseline(6) - 22f + LINE_SPACING
+        // --- Lines 6-8: Diagram area with smiley face ---
+        val diagramArea = DiagramArea(startLineIndex = 6, heightInLines = 3)
+
+        val smileyCx = writingWidth / 2f
+        val smileyCy = lineTop(6) + 1.5f * LINE_SPACING
+        val smileyR = LINE_SPACING * 1.1f
+
+        // Track stroke count before smiley so we can extract them for text view
+        val preSmileyStrokeCount = strokes.size
+
+        // Face circle
+        val facePoints = (0..40).map { i ->
+            val angle = 2.0 * Math.PI * i / 40
+            StrokePoint(
+                smileyCx + smileyR * Math.cos(angle).toFloat(),
+                smileyCy + smileyR * Math.sin(angle).toFloat(),
+                0.5f, 0L
+            )
+        }
+        strokes.add(InkStroke(points = facePoints, strokeWidth = 3f))
+
+        // Eyes
+        val eyeR = LINE_SPACING * 0.12f
+        val eyeOffsetX = smileyR * 0.35f
+        val eyeOffsetY = smileyR * 0.25f
+        for (side in listOf(-1f, 1f)) {
+            val eyePoints = (0..20).map { i ->
+                val angle = 2.0 * Math.PI * i / 20
+                StrokePoint(
+                    smileyCx + side * eyeOffsetX + eyeR * Math.cos(angle).toFloat(),
+                    smileyCy - eyeOffsetY + eyeR * Math.sin(angle).toFloat(),
+                    0.5f, 0L
+                )
+            }
+            strokes.add(InkStroke(points = eyePoints, strokeWidth = 2f))
+        }
+
+        // Mouth (smile arc — bottom of circle)
+        val mouthCy = smileyCy + smileyR * 0.1f
+        val mouthR = smileyR * 0.5f
+        val mouthPoints = (0..20).map { i ->
+            val angle = Math.toRadians(20.0 + 140.0 * i / 20)
+            StrokePoint(
+                smileyCx + mouthR * Math.cos(angle).toFloat(),
+                mouthCy + mouthR * Math.sin(angle).toFloat(),
+                0.5f, 0L
+            )
+        }
+        strokes.add(InkStroke(points = mouthPoints, strokeWidth = 2f))
+
+        val smileyStrokes = strokes.subList(preSmileyStrokeCount, strokes.size).toList()
+
+        // --- Scribble-then-down annotation (starts above diagram, arrow goes into it) ---
+        val scribbleX = 140f
+        val scribbleWidth = 80f
+        val scribbleBaseY = lineTop(5) + LINE_SPACING * 0.3f
+        val zigZagPoints = mutableListOf<StrokePoint>()
+        val zigSegments = 6
+        for (i in 0..zigSegments) {
+            val t = i.toFloat() / zigSegments
+            val px = if (i == zigSegments) scribbleX + scribbleWidth / 2f
+                     else scribbleX + if (i % 2 == 0) 0f else scribbleWidth
+            val py = scribbleBaseY + t * LINE_SPACING * 0.8f
+            zigZagPoints.add(StrokePoint(px, py, 0.5f, 0L))
+        }
+        annotations.add(AnnotationStroke(zigZagPoints, green, 4f))
+
+        val scribbleArrowX = scribbleX + scribbleWidth / 2f
+        val scribbleArrowStartY = scribbleBaseY + LINE_SPACING * 0.8f - 1f
+        val scribbleArrowEndY = scribbleArrowStartY + LINE_SPACING * 0.8f
+        annotations.add(makeLine(scribbleArrowX, scribbleArrowStartY, scribbleArrowX, scribbleArrowEndY, green, 5f))
+        annotations.add(makeLine(scribbleArrowX - 12f, scribbleArrowEndY - 20f, scribbleArrowX, scribbleArrowEndY, green, 4f))
+        annotations.add(makeLine(scribbleArrowX + 12f, scribbleArrowEndY - 20f, scribbleArrowX, scribbleArrowEndY, green, 4f))
+
+        textAnnotations.add(TextAnnotation(
+            "Scribble then down",
+            scribbleX, scribbleArrowEndY + 30f, green, 32f
+        ))
+        textAnnotations.add(TextAnnotation(
+            "inserts a drawing area",
+            scribbleX, scribbleArrowEndY + 66f, green, 32f
+        ))
+
+        // --- Undo/redo gesture demo: right-then-up arrow (shifted up 2 lines) ---
+        val undoMidY = baseline(4) - 22f + LINE_SPACING - LINE_SPACING * 0.25f
         val undoRightLen = 2f * LINE_SPACING
         val undoUpLen = 2f * LINE_SPACING
         val undoStartX = writingWidth - 140f - undoRightLen
@@ -152,20 +233,20 @@ object TutorialContent {
         annotations.add(makeLine(undoCornerX - 12f, undoEndY + 20f, undoCornerX, undoEndY, blue, 4f))
         annotations.add(makeLine(undoCornerX + 12f, undoEndY + 20f, undoCornerX, undoEndY, blue, 4f))
         textAnnotations.add(
-            TextAnnotation("Right/left then up/down for undo/redo", (undoStartX + undoCornerX) / 2f, undoMidY + 41f, blue, 32f, centered = true)
+            TextAnnotation("Right/left then up/down for undo/redo", (undoStartX + undoCornerX) / 2f - 30f, undoMidY + 41f, blue, 32f, centered = true)
         )
 
-        // --- Auto-scroll hint between delete and insert demos ---
+        // --- Auto-scroll hint below diagram area ---
         textAnnotations.add(
             TextAnnotation(
                 "Writing will auto-scroll up as you reach the bottom",
-                writingWidth / 2f, lineTop(7) - LINE_SPACING * 0.35f + 5f * LINE_SPACING, blue, 34f,
+                writingWidth / 2f, lineTop(10) + LINE_SPACING * 0.8f, blue, 34f,
                 centered = true
             )
         )
 
-        // Canvas content extends to bottom of line 8
-        val canvasContentHeight = lineTop(8) + LINE_SPACING + 20f - scrollOffset
+        // Canvas content extends below diagram area + auto-scroll hint
+        val canvasContentHeight = lineTop(12) + 20f - scrollOffset
 
         // --- Text paragraphs for the text view ---
         val textParagraphs = listOf(
@@ -180,15 +261,17 @@ object TutorialContent {
             ),
             listOf(
                 WritingCoordinator.TextSegment("The quick brown fox", dimmed = false, lineIndex = 3),
-                WritingCoordinator.TextSegment("jumps over the lazy dog", dimmed = false, lineIndex = 4)
-            ),
-            listOf(
-                WritingCoordinator.TextSegment("Hello world", dimmed = false, lineIndex = 5)
-            ),
-            listOf(
-                WritingCoordinator.TextSegment("Line above", dimmed = false, lineIndex = 6),
-                WritingCoordinator.TextSegment("Line below", dimmed = false, lineIndex = 8)
+                WritingCoordinator.TextSegment("jumps over the dog", dimmed = false, lineIndex = 4)
             )
+        )
+
+        // Diagram display for the text view (smiley rendered inline)
+        val diagramDisplay = WritingCoordinator.DiagramDisplay(
+            startLineIndex = 6,
+            strokes = smileyStrokes,
+            canvasWidth = writingWidth.toFloat(),
+            heightPx = 3f * LINE_SPACING,
+            offsetY = lineTop(6)
         )
 
         return TutorialData(
@@ -197,7 +280,9 @@ object TutorialContent {
             textAnnotations = textAnnotations,
             scrollOffsetY = scrollOffset,
             textParagraphs = textParagraphs,
-            canvasContentHeight = canvasContentHeight
+            canvasContentHeight = canvasContentHeight,
+            diagramAreas = listOf(diagramArea),
+            diagramDisplays = listOf(diagramDisplay)
         )
     }
 

@@ -75,7 +75,7 @@ class TutorialManager(
         val totalHeight = textView.height + inkCanvas.height
         val textNeeded = run {
             val temp = TutorialContent.generate(inkCanvas.width, inkCanvas.height)
-            textView.setParagraphs(temp.textParagraphs)
+            textView.setContent(temp.textParagraphs, temp.diagramDisplays)
             textView.totalTextHeight + 130  // 110 close button + 5 gap + 15 bottom padding
         }
 
@@ -91,13 +91,14 @@ class TutorialManager(
 
         // Second pass: regenerate with correct canvas height (for auto-scroll hint positioning)
         val tutorial = TutorialContent.generate(inkCanvas.width, newCanvasHeight)
-        textView.setParagraphs(tutorial.textParagraphs)
+        textView.setContent(tutorial.textParagraphs, tutorial.diagramDisplays)
 
         // Load tutorial strokes into canvas
         inkCanvas.loadStrokes(tutorial.strokes)
         inkCanvas.scrollOffsetY = tutorial.scrollOffsetY
         inkCanvas.annotationStrokes = tutorial.annotations
         inkCanvas.textAnnotations = tutorial.textAnnotations
+        inkCanvas.diagramAreas = tutorial.diagramAreas
         inkCanvas.tutorialMode = true
         inkCanvas.drawToSurface()
 
@@ -123,7 +124,8 @@ class TutorialManager(
         canvasParams.weight = savedCanvasWeight
         inkCanvas.layoutParams = canvasParams
 
-        // Clear tutorial annotations
+        // Clear tutorial annotations and diagram areas
+        inkCanvas.diagramAreas = emptyList()
         inkCanvas.clearAnnotations()
 
         // Restore original document
