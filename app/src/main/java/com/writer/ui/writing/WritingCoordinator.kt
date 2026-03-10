@@ -1,10 +1,18 @@
 package com.writer.ui.writing
 
+import android.graphics.RectF
 import android.util.Log
 import com.writer.model.DiagramArea
+import com.writer.model.DiagramEdge
+import com.writer.model.DiagramNode
 import com.writer.model.DocumentModel
 import com.writer.model.InkStroke
+import com.writer.model.StrokeType
 import com.writer.model.shiftY
+import com.writer.model.minX
+import com.writer.model.maxX
+import com.writer.model.minY
+import com.writer.model.maxY
 import com.writer.recognition.HandwritingRecognizer
 import com.writer.recognition.LineSegmenter
 import com.writer.recognition.StrokeClassifier
@@ -92,7 +100,9 @@ class WritingCoordinator(
 
     fun start() {
         Log.i(TAG, "Coordinator started")
+        inkCanvas.documentModel = documentModel
         inkCanvas.onStrokeCompleted = { stroke -> onStrokeCompleted(stroke) }
+        inkCanvas.onScratchOut = { left, top, right, bottom -> onScratchOut(left, top, right, bottom) }
         inkCanvas.onIdleTimeout = { onIdle() }
         inkCanvas.onManualScroll = {
             // Clamp text overscroll so text doesn't scroll completely out of view
@@ -124,7 +134,9 @@ class WritingCoordinator(
     fun stop() {
         scrollAnimating = false
         textRefreshJob?.cancel()
+        inkCanvas.documentModel = null
         inkCanvas.onStrokeCompleted = null
+        inkCanvas.onScratchOut = null
         inkCanvas.onIdleTimeout = null
         inkCanvas.onManualScroll = null
         textView.onTextTap = null
@@ -150,6 +162,8 @@ class WritingCoordinator(
         currentLineIndex = -1
         userRenamed = false
         documentModel.diagramAreas.clear()
+        documentModel.diagram.nodes.clear()
+        documentModel.diagram.edges.clear()
         inkCanvas.diagramAreas = emptyList()
     }
 
@@ -166,8 +180,12 @@ class WritingCoordinator(
 
         val lineIdx = lineSegmenter.getStrokeLineIndex(stroke)
 
-        // Diagram strokes: no recognition, no line tracking
-        if (isDiagramLine(lineIdx)) return
+        // Diagram strokes: register diagram elements, no text recognition
+        if (isDiagramLine(lineIdx)) {
+            registerDiagramStroke(stroke)
+            displayHiddenLines()
+            return
+        }
 
         // If the user modified a previously recognized line, invalidate cache
         lineTextCache.remove(lineIdx)
@@ -191,6 +209,96 @@ class WritingCoordinator(
         if (lineIdx > highestLineIndex) {
             highestLineIndex = lineIdx
         }
+    }
+
+    // --- Diagram element registration ---
+
+    /** Register a stroke as a diagram node (shape) or edge (arrow/line) based on its strokeType. */
+    private fun registerDiagramStroke(stroke: InkStroke) {
+        when (stroke.strokeType) {
+            StrokeType.RECTANGLE, StrokeType.ROUNDED_RECTANGLE, StrokeType.ELLIPSE,
+            StrokeType.TRIANGLE, StrokeType.DIAMOND -> {
+                val bounds = RectF(stroke.minX, stroke.minY, stroke.maxX, stroke.maxY)
+                val node = DiagramNode(stroke.strokeId, stroke.strokeType, bounds)
+                documentModel.diagram.nodes[stroke.strokeId] = node
+                Log.i(TAG, "Registered diagram node: ${stroke.strokeType} ${stroke.strokeId}")
+                recognizeShapeLabel(node)
+            }
+            StrokeType.ARROW_HEAD, StrokeType.ARROW_TAIL, StrokeType.ARROW_BOTH -> {
+                val fromId = inkCanvas.lastSnapFromNodeId
+                val toId = inkCanvas.lastSnapToNodeId
+                inkCanvas.lastSnapFromNodeId = null
+                inkCanvas.lastSnapToNodeId = null
+                documentModel.diagram.edges[stroke.strokeId] = DiagramEdge(stroke.strokeId, fromId, toId)
+                Log.i(TAG, "Registered diagram edge: ${stroke.strokeType} ${stroke.strokeId} from=$fromId to=$toId")
+            }
+            StrokeType.LINE -> {
+                // Snapped straight line — not text, not an arrow. Just leave it.
+            }
+            StrokeType.FREEHAND -> {
+                // Freehand inside diagram — check if it's inside a shape for label recognition
+                val centerX = (stroke.minX + stroke.maxX) / 2f
+                val centerY = (stroke.minY + stroke.maxY) / 2f
+                val containingNode = documentModel.diagram.nodes.values
+                    .firstOrNull { it.bounds.contains(centerX, centerY) }
+                if (containingNode != null) {
+                    recognizeShapeLabel(containingNode)
+                }
+            }
+        }
+    }
+
+    /** Recognize freehand strokes inside a shape's bounds as a text label. */
+    private fun recognizeShapeLabel(node: DiagramNode) {
+        val innerStrokes = documentModel.activeStrokes.filter { s ->
+            s.strokeType == StrokeType.FREEHAND && s.strokeId != node.strokeId &&
+            node.bounds.contains((s.minX + s.maxX) / 2f, (s.minY + s.maxY) / 2f)
+        }
+        if (innerStrokes.isEmpty()) {
+            node.label = ""
+            return
+        }
+        scope.launch {
+            val inkLine = com.writer.model.InkLine.build(innerStrokes)
+            val text = withContext(Dispatchers.IO) {
+                recognizer.recognizeLine(inkLine)
+            }
+            if (text != null) {
+                node.label = text
+                Log.i(TAG, "Shape label: '${node.label}' for ${node.strokeId}")
+                displayHiddenLines()
+            }
+        }
+    }
+
+    /** Handle scratch-out erase gesture: remove overlapping strokes and diagram elements. */
+    private fun onScratchOut(left: Float, top: Float, right: Float, bottom: Float) {
+        saveUndoSnapshot()
+        val eraseRegion = RectF(left, top, right, bottom)
+        val toRemove = documentModel.activeStrokes.filter { stroke ->
+            val sx = (stroke.minX + stroke.maxX) / 2f
+            val sy = (stroke.minY + stroke.maxY) / 2f
+            eraseRegion.contains(sx, sy)
+        }
+        if (toRemove.isEmpty()) return
+
+        val erasedIds = toRemove.map { it.strokeId }.toSet()
+        documentModel.activeStrokes.removeAll(toRemove)
+
+        // Clean up diagram model
+        for (id in erasedIds) {
+            documentModel.diagram.nodes.remove(id)
+            documentModel.diagram.edges.remove(id)
+        }
+        // Also remove edges that reference erased nodes
+        documentModel.diagram.edges.entries.removeAll { (_, edge) ->
+            edge.fromNodeId in erasedIds || edge.toNodeId in erasedIds
+        }
+
+        inkCanvas.loadStrokes(documentModel.activeStrokes)
+        inkCanvas.drawToSurface()
+        displayHiddenLines()
+        Log.i(TAG, "Scratch-out erased ${toRemove.size} strokes")
     }
 
     // --- Recognition ---
@@ -860,7 +968,9 @@ class WritingCoordinator(
             strokes = documentModel.activeStrokes.toList(),
             scrollOffsetY = inkCanvas.scrollOffsetY,
             lineTextCache = lineTextCache.toMap(),
-            diagramAreas = documentModel.diagramAreas.toList()
+            diagramAreas = documentModel.diagramAreas.toList(),
+            diagramNodes = documentModel.diagram.nodes.toMap(),
+            diagramEdges = documentModel.diagram.edges.toMap()
         ))
     }
 
@@ -869,6 +979,10 @@ class WritingCoordinator(
         documentModel.activeStrokes.addAll(snapshot.strokes)
         documentModel.diagramAreas.clear()
         documentModel.diagramAreas.addAll(snapshot.diagramAreas)
+        documentModel.diagram.nodes.clear()
+        documentModel.diagram.nodes.putAll(snapshot.diagramNodes)
+        documentModel.diagram.edges.clear()
+        documentModel.diagram.edges.putAll(snapshot.diagramEdges)
         inkCanvas.diagramAreas = snapshot.diagramAreas
         inkCanvas.loadStrokes(snapshot.strokes)
         inkCanvas.scrollOffsetY = snapshot.scrollOffsetY
@@ -883,7 +997,9 @@ class WritingCoordinator(
         strokes = documentModel.activeStrokes.toList(),
         scrollOffsetY = inkCanvas.scrollOffsetY,
         lineTextCache = lineTextCache.toMap(),
-        diagramAreas = documentModel.diagramAreas.toList()
+        diagramAreas = documentModel.diagramAreas.toList(),
+        diagramNodes = documentModel.diagram.nodes.toMap(),
+        diagramEdges = documentModel.diagram.edges.toMap()
     )
 
     fun undo() {
@@ -913,7 +1029,8 @@ class WritingCoordinator(
             highestLineIndex = highestLineIndex,
             currentLineIndex = currentLineIndex,
             userRenamed = userRenamed,
-            diagramAreas = documentModel.diagramAreas.toList()
+            diagramAreas = documentModel.diagramAreas.toList(),
+            diagram = documentModel.diagram
         )
     }
 

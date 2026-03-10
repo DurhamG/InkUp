@@ -182,6 +182,8 @@ class WritingActivity : AppCompatActivity() {
 
         documentModel.activeStrokes.addAll(data.strokes)
         documentModel.diagramAreas.addAll(data.diagramAreas)
+        documentModel.diagram.nodes.putAll(data.diagram.nodes)
+        documentModel.diagram.edges.putAll(data.diagram.edges)
         inkCanvas.diagramAreas = data.diagramAreas
         inkCanvas.loadStrokes(data.strokes)
         inkCanvas.scrollOffsetY = data.scrollOffsetY

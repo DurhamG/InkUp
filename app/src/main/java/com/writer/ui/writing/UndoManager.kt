@@ -1,6 +1,8 @@
 package com.writer.ui.writing
 
 import com.writer.model.DiagramArea
+import com.writer.model.DiagramEdge
+import com.writer.model.DiagramNode
 import com.writer.model.InkStroke
 
 class UndoManager(private val maxHistory: Int = 50) {
@@ -9,7 +11,9 @@ class UndoManager(private val maxHistory: Int = 50) {
         val strokes: List<InkStroke>,
         val scrollOffsetY: Float,
         val lineTextCache: Map<Int, String>,
-        val diagramAreas: List<DiagramArea> = emptyList()
+        val diagramAreas: List<DiagramArea> = emptyList(),
+        val diagramNodes: Map<String, DiagramNode> = emptyMap(),
+        val diagramEdges: Map<String, DiagramEdge> = emptyMap()
     )
 
     private val undoStack = ArrayDeque<Snapshot>()

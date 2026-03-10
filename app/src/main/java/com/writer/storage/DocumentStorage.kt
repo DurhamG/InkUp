@@ -4,10 +4,15 @@ import android.content.Context
 import android.net.Uri
 import android.util.Log
 import androidx.documentfile.provider.DocumentFile
+import android.graphics.RectF
 import com.writer.model.DiagramArea
+import com.writer.model.DiagramEdge
+import com.writer.model.DiagramModel
+import com.writer.model.DiagramNode
 import com.writer.model.DocumentData
 import com.writer.model.InkStroke
 import com.writer.model.StrokePoint
+import com.writer.model.StrokeType
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
@@ -201,6 +206,12 @@ object DocumentStorage {
             val strokeObj = JSONObject()
             strokeObj.put("strokeId", stroke.strokeId)
             strokeObj.put("strokeWidth", stroke.strokeWidth.toDouble())
+            if (stroke.strokeType != StrokeType.FREEHAND) {
+                strokeObj.put("strokeType", stroke.strokeType.name)
+            }
+            if (stroke.isGeometric) {
+                strokeObj.put("isGeometric", true)
+            }
 
             val pointsArr = JSONArray()
             for (pt in stroke.points) {
@@ -225,6 +236,35 @@ object DocumentStorage {
             diagramArr.put(areaObj)
         }
         json.put("diagramAreas", diagramArr)
+
+        // Serialize diagram model (nodes/edges)
+        val diagram = data.diagram
+        if (diagram.nodes.isNotEmpty() || diagram.edges.isNotEmpty()) {
+            val diagramObj = JSONObject()
+            val nodesArr = JSONArray()
+            for (node in diagram.nodes.values) {
+                val nodeObj = JSONObject()
+                nodeObj.put("strokeId", node.strokeId)
+                nodeObj.put("shapeType", node.shapeType.name)
+                nodeObj.put("left", node.bounds.left.toDouble())
+                nodeObj.put("top", node.bounds.top.toDouble())
+                nodeObj.put("right", node.bounds.right.toDouble())
+                nodeObj.put("bottom", node.bounds.bottom.toDouble())
+                if (node.label.isNotEmpty()) nodeObj.put("label", node.label)
+                nodesArr.put(nodeObj)
+            }
+            diagramObj.put("nodes", nodesArr)
+            val edgesArr = JSONArray()
+            for (edge in diagram.edges.values) {
+                val edgeObj = JSONObject()
+                edgeObj.put("strokeId", edge.strokeId)
+                if (edge.fromNodeId != null) edgeObj.put("fromNodeId", edge.fromNodeId)
+                if (edge.toNodeId != null) edgeObj.put("toNodeId", edge.toNodeId)
+                edgesArr.put(edgeObj)
+            }
+            diagramObj.put("edges", edgesArr)
+            json.put("diagram", diagramObj)
+        }
 
         return json
     }
@@ -275,11 +315,17 @@ object DocumentStorage {
                     )
                 }
 
+                val strokeTypeName = strokeObj.optString("strokeType", "FREEHAND")
+                val strokeType = try { StrokeType.valueOf(strokeTypeName) } catch (_: Exception) { StrokeType.FREEHAND }
+                val isGeometric = strokeObj.optBoolean("isGeometric", false)
+
                 strokes.add(
                     InkStroke(
                         strokeId = strokeId,
                         points = points,
-                        strokeWidth = strokeWidth
+                        strokeWidth = strokeWidth,
+                        isGeometric = isGeometric,
+                        strokeType = strokeType
                     )
                 )
             }
@@ -300,6 +346,38 @@ object DocumentStorage {
             }
         }
 
+        // Deserialize diagram model (nodes/edges)
+        val diagram = DiagramModel()
+        val diagramObj = json.optJSONObject("diagram")
+        if (diagramObj != null) {
+            val nodesArr = diagramObj.optJSONArray("nodes")
+            if (nodesArr != null) {
+                for (i in 0 until nodesArr.length()) {
+                    val nodeObj = nodesArr.getJSONObject(i)
+                    val strokeId = nodeObj.getString("strokeId")
+                    val shapeType = try { StrokeType.valueOf(nodeObj.getString("shapeType")) } catch (_: Exception) { StrokeType.RECTANGLE }
+                    val bounds = RectF(
+                        nodeObj.getDouble("left").toFloat(),
+                        nodeObj.getDouble("top").toFloat(),
+                        nodeObj.getDouble("right").toFloat(),
+                        nodeObj.getDouble("bottom").toFloat()
+                    )
+                    val label = nodeObj.optString("label", "")
+                    diagram.nodes[strokeId] = DiagramNode(strokeId, shapeType, bounds, label)
+                }
+            }
+            val edgesArr = diagramObj.optJSONArray("edges")
+            if (edgesArr != null) {
+                for (i in 0 until edgesArr.length()) {
+                    val edgeObj = edgesArr.getJSONObject(i)
+                    val strokeId = edgeObj.getString("strokeId")
+                    val fromNodeId = if (edgeObj.has("fromNodeId")) edgeObj.getString("fromNodeId") else null
+                    val toNodeId = if (edgeObj.has("toNodeId")) edgeObj.getString("toNodeId") else null
+                    diagram.edges[strokeId] = DiagramEdge(strokeId, fromNodeId, toNodeId)
+                }
+            }
+        }
+
         return DocumentData(
             strokes = strokes,
             scrollOffsetY = scrollOffsetY,
@@ -308,7 +386,8 @@ object DocumentStorage {
             highestLineIndex = highestLineIndex,
             currentLineIndex = currentLineIndex,
             userRenamed = userRenamed,
-            diagramAreas = diagramAreas
+            diagramAreas = diagramAreas,
+            diagram = diagram
         )
     }
 }
