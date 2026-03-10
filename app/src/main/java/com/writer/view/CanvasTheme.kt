@@ -5,6 +5,8 @@ import android.graphics.Color
 import android.graphics.Paint
 import android.graphics.Path
 import com.writer.model.InkStroke
+import com.writer.model.StrokeType
+import kotlin.math.hypot
 
 /**
  * Shared visual constants and drawing utilities used by both
@@ -57,15 +59,65 @@ object CanvasTheme {
         if (stroke.points.size < 2) return
         path.reset()
         path.moveTo(stroke.points[0].x, stroke.points[0].y)
-        for (i in 1 until stroke.points.size) {
-            val prev = stroke.points[i - 1]
-            val curr = stroke.points[i]
-            val midX = (prev.x + curr.x) / 2f
-            val midY = (prev.y + curr.y) / 2f
-            path.quadTo(prev.x, prev.y, midX, midY)
+        if (stroke.isGeometric) {
+            // Sharp corners: lineTo each point (rectangle, triangle, arrow line, diamond).
+            for (i in 1 until stroke.points.size) {
+                path.lineTo(stroke.points[i].x, stroke.points[i].y)
+            }
+        } else {
+            // Smooth freehand rendering via quadratic bezier through midpoints.
+            for (i in 1 until stroke.points.size) {
+                val prev = stroke.points[i - 1]
+                val curr = stroke.points[i]
+                val midX = (prev.x + curr.x) / 2f
+                val midY = (prev.y + curr.y) / 2f
+                path.quadTo(prev.x, prev.y, midX, midY)
+            }
+            path.lineTo(stroke.points.last().x, stroke.points.last().y)
         }
-        val last = stroke.points.last()
-        path.lineTo(last.x, last.y)
         canvas.drawPath(path, paint)
+
+        // Draw arrowheads for arrow stroke types
+        val first = stroke.points.first()
+        val last = stroke.points.last()
+        val size = stroke.strokeWidth * 4f
+        when (stroke.strokeType) {
+            StrokeType.ARROW_HEAD -> drawArrowhead(canvas, paint, last.x, last.y,
+                last.x - first.x, last.y - first.y, size)
+            StrokeType.ARROW_TAIL -> drawArrowhead(canvas, paint, first.x, first.y,
+                first.x - last.x, first.y - last.y, size)
+            StrokeType.ARROW_BOTH -> {
+                drawArrowhead(canvas, paint, last.x, last.y,
+                    last.x - first.x, last.y - first.y, size)
+                drawArrowhead(canvas, paint, first.x, first.y,
+                    first.x - last.x, first.y - last.y, size)
+            }
+            else -> {}
+        }
+    }
+
+    /**
+     * Draw a filled isoceles triangle arrowhead at ([tipX], [tipY]) pointing in direction ([dx], [dy]).
+     * [size] is the base half-width; height = size × 1.5.
+     */
+    private fun drawArrowhead(
+        canvas: Canvas, paint: Paint,
+        tipX: Float, tipY: Float,
+        dx: Float, dy: Float,
+        size: Float
+    ) {
+        val len = hypot(dx, dy)
+        if (len == 0f) return
+        val fx = dx / len; val fy = dy / len
+        val px = -fy; val py = fx
+        val height = size * 1.5f
+        val bx = tipX - height * fx; val by = tipY - height * fy
+        val arrowPath = Path()
+        arrowPath.moveTo(tipX, tipY)
+        arrowPath.lineTo(bx + size * px, by + size * py)
+        arrowPath.lineTo(bx - size * px, by - size * py)
+        arrowPath.close()
+        val fillPaint = Paint(paint).apply { style = Paint.Style.FILL }
+        canvas.drawPath(arrowPath, fillPaint)
     }
 }
