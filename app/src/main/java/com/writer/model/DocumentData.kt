@@ -8,5 +8,6 @@ data class DocumentData(
     val highestLineIndex: Int,
     val currentLineIndex: Int,
     val userRenamed: Boolean = false,
-    val diagramAreas: List<DiagramArea> = emptyList()
+    val diagramAreas: List<DiagramArea> = emptyList(),
+    val diagram: DiagramModel = DiagramModel()
 )

@@ -7,5 +7,7 @@ data class InkStroke(
     val points: List<StrokePoint>,
     val strokeWidth: Float = 3f,
     val startTime: Long = points.firstOrNull()?.timestamp ?: 0L,
-    val endTime: Long = points.lastOrNull()?.timestamp ?: 0L
+    val endTime: Long = points.lastOrNull()?.timestamp ?: 0L,
+    val isGeometric: Boolean = false,
+    val strokeType: StrokeType = StrokeType.FREEHAND
 )
