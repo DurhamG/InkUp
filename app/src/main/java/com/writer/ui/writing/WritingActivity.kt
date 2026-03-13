@@ -19,7 +19,8 @@ import androidx.core.view.WindowCompat
 import androidx.lifecycle.lifecycleScope
 import com.writer.R
 import com.writer.model.DocumentModel
-import com.writer.recognition.HandwritingRecognizer
+import com.writer.recognition.TextRecognizer
+import com.writer.recognition.TextRecognizerFactory
 import com.writer.model.DocumentData
 import com.writer.storage.DocumentStorage
 import com.writer.view.HandwritingCanvasView
@@ -39,7 +40,7 @@ class WritingActivity : AppCompatActivity() {
     private lateinit var recognizedTextView: RecognizedTextView
 
     private lateinit var documentModel: DocumentModel
-    private lateinit var recognizer: HandwritingRecognizer
+    private lateinit var recognizer: TextRecognizer
     private var coordinator: WritingCoordinator? = null
     private lateinit var tutorialManager: TutorialManager
 
@@ -108,7 +109,6 @@ class WritingActivity : AppCompatActivity() {
         recognizedTextView = findViewById(R.id.recognizedTextView)
 
         documentModel = DocumentModel()
-        recognizer = HandwritingRecognizer()
 
         tutorialManager = TutorialManager(
             context = this,
@@ -134,6 +134,9 @@ class WritingActivity : AppCompatActivity() {
 
         // Tap "I" logo to open menu
         recognizedTextView.onLogoTap = { showMenu() }
+
+        // Pick the best available recognizer synchronously (initialized later in coroutine)
+        recognizer = TextRecognizerFactory.create(this)
 
         // Create coordinator early so cached text can be displayed before model loads
         startCoordinator()

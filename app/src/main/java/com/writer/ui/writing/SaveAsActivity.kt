@@ -1,7 +1,6 @@
 package com.writer.ui.writing
 
 import android.content.Intent
-import android.graphics.RectF
 import android.os.Bundle
 import android.util.Log
 import android.widget.TextView
@@ -13,7 +12,8 @@ import com.writer.model.InkLine
 import com.writer.model.InkStroke
 import com.writer.model.minX
 import com.writer.model.maxX
-import com.writer.recognition.HandwritingRecognizer
+import com.writer.recognition.TextRecognizer
+import com.writer.recognition.TextRecognizerFactory
 import com.writer.view.HandwritingNameInput
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -30,7 +30,7 @@ class SaveAsActivity : AppCompatActivity() {
     private lateinit var nameDisplay: TextView
     private lateinit var handwritingInput: HandwritingNameInput
 
-    private val recognizer = HandwritingRecognizer()
+    private var recognizer: TextRecognizer? = null
     private var recognizerReady = false
     private val allStrokes = mutableListOf<InkStroke>()
     private var currentName = ""
@@ -50,7 +50,9 @@ class SaveAsActivity : AppCompatActivity() {
         // Initialize recognizer
         lifecycleScope.launch {
             try {
-                recognizer.initialize("en-US")
+                recognizer = TextRecognizerFactory.create(this@SaveAsActivity).also {
+                    it.initialize("en-US")
+                }
                 recognizerReady = true
             } catch (e: Exception) {
                 Log.e(TAG, "Failed to init recognizer", e)
@@ -136,7 +138,7 @@ class SaveAsActivity : AppCompatActivity() {
         lifecycleScope.launch {
             try {
                 val text = withContext(Dispatchers.IO) {
-                    recognizer.recognizeLine(line)
+                    recognizer?.recognizeLine(line) ?: ""
                 }
                 currentName = text.trim()
                 nameDisplay.text = currentName
@@ -148,6 +150,6 @@ class SaveAsActivity : AppCompatActivity() {
 
     override fun onDestroy() {
         super.onDestroy()
-        recognizer.close()
+        recognizer?.close()
     }
 }

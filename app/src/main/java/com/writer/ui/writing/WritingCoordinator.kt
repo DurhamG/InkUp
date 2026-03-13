@@ -5,7 +5,7 @@ import com.writer.model.DiagramArea
 import com.writer.model.DocumentModel
 import com.writer.model.InkStroke
 import com.writer.model.shiftY
-import com.writer.recognition.HandwritingRecognizer
+import com.writer.recognition.TextRecognizer
 import com.writer.recognition.LineSegmenter
 import com.writer.recognition.StrokeClassifier
 import com.writer.model.DocumentData
@@ -21,7 +21,7 @@ import kotlinx.coroutines.withContext
 
 class WritingCoordinator(
     private val documentModel: DocumentModel,
-    private val recognizer: HandwritingRecognizer,
+    var recognizer: TextRecognizer,
     private val inkCanvas: HandwritingCanvasView,
     private val textView: RecognizedTextView,
     private val scope: CoroutineScope,
