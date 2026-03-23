@@ -37,14 +37,12 @@ class HandwritingCanvasView @JvmOverloads constructor(
 
     companion object {
         private const val TAG = "HandwritingCanvas"
-        // Line spacing, top margin and gutter width are DPI-scaled via ScreenMetrics.
+        // Line spacing and top margin are DPI-scaled via ScreenMetrics.
         val LINE_SPACING get() = ScreenMetrics.lineSpacing
         // Idle timeout before checking scroll condition (ms)
         private const val IDLE_TIMEOUT_MS = 2000L
         // Top margin before the first line
         val TOP_MARGIN get() = ScreenMetrics.topMargin
-        // Width of the scroll gutter on the right edge
-        val GUTTER_WIDTH get() = ScreenMetrics.gutterWidth
         // Line-drag gesture: vertical span to activate (either direction)
         private const val LINE_DRAG_MIN_SPANS = 1f
         // Line-drag gesture: max horizontal drift ratio during activation
@@ -73,8 +71,6 @@ class HandwritingCanvasView @JvmOverloads constructor(
 
     private val strokePaint = CanvasTheme.newStrokePaint()
     private val linePaint = CanvasTheme.newLinePaint()
-    private val gutterPaint = CanvasTheme.newGutterFillPaint()
-    private val gutterLinePaint = CanvasTheme.newGutterLinePaint()
     private val diagramBorderPaint = CanvasTheme.newDiagramBorderPaint()
 
     private val annotationPaint = Paint().apply {
@@ -102,6 +98,9 @@ class HandwritingCanvasView @JvmOverloads constructor(
     /** Called when manual scrolling changes the offset. */
     var onManualScroll: (() -> Unit)? = null
 
+    /** Called when pen state changes: true = pen down (writing), false = pen lifted. */
+    var onPenStateChanged: ((Boolean) -> Unit)? = null
+
     // Line-drag gesture callbacks
     var onLineDragStart: ((anchorLine: Int) -> Unit)? = null
     var onLineDragStep: ((shiftLines: Int) -> Unit)? = null
@@ -122,10 +121,6 @@ class HandwritingCanvasView @JvmOverloads constructor(
 
     /** Extra scroll past the top of the document, for scrolling the text view. */
     var textOverscroll: Float = 0f
-
-    // Gutter scrolling state
-    private var isGutterDragging = false
-    private var gutterDragLastY = 0f
 
     // Line-drag gesture state
     private var lineDragActive = false
@@ -148,6 +143,13 @@ class HandwritingCanvasView @JvmOverloads constructor(
     private var currentDiagramBounds: Pair<Float, Float>? = null // (topY, bottomY) in doc space
     // Whether we've temporarily changed the Onyx SDK limit rect for a diagram stroke
     private var diagramLimitActive = false
+
+    /** Shared palm-rejection filter, set by WritingActivity. */
+    var touchFilter: TouchFilter? = null
+
+    // Finger scroll state
+    private var fingerScrollActive = false
+    private var fingerScrollLastY = 0f
 
     private val idleRunnable = Runnable { onIdleTimeout?.invoke() }
 
@@ -172,6 +174,8 @@ class HandwritingCanvasView @JvmOverloads constructor(
 
     private val onyxCallback = object : RawInputCallback() {
         override fun onBeginRawDrawing(b: Boolean, tp: TouchPoint) {
+            touchFilter?.penActive = true
+            onPenStateChanged?.invoke(true)
             handler.removeCallbacks(idleRunnable)
             currentStrokePoints.clear()
             val docPt = tp.toDocStrokePoint()
@@ -216,6 +220,13 @@ class HandwritingCanvasView @JvmOverloads constructor(
         }
 
         override fun onEndRawDrawing(b: Boolean, tp: TouchPoint) {
+            if (!lineDragActive && !diagramInsertActive && !undoScrubActive) {
+                touchFilter?.let {
+                    it.penActive = false
+                    it.penUpTimestamp = android.os.SystemClock.uptimeMillis()
+                }
+                onPenStateChanged?.invoke(false)
+            }
             Log.d(TAG, "onEndRawDrawing: ${currentStrokePoints.size} points, lineDrag=$lineDragActive, diagramInsert=$diagramInsertActive, undoReady=$undoGestureReady, undoScrub=$undoScrubActive")
             if (lineDragActive || diagramInsertActive || undoScrubActive) {
                 // SDK fires this when disabled mid-stroke (buffer dump).
@@ -276,7 +287,6 @@ class HandwritingCanvasView @JvmOverloads constructor(
             try {
                 val limit = Rect()
                 getLocalVisibleRect(limit)
-                limit.right = (limit.right - GUTTER_WIDTH).toInt()
                 touchHelper?.setLimitRect(limit, emptyList())
             } catch (e: Exception) {
                 Log.w(TAG, "Error updating limit rect: ${e.message}")
@@ -301,7 +311,6 @@ class HandwritingCanvasView @JvmOverloads constructor(
         try {
             val limit = Rect()
             getLocalVisibleRect(limit)
-            limit.right = (limit.right - GUTTER_WIDTH).toInt()
 
             touchHelper = TouchHelper.create(this, onyxCallback)
             touchHelper?.setStrokeWidth(CanvasTheme.DEFAULT_STROKE_WIDTH)
@@ -325,20 +334,10 @@ class HandwritingCanvasView @JvmOverloads constructor(
     override fun onTouchEvent(event: MotionEvent): Boolean {
         val toolType = event.getToolType(0)
 
-        // Reject all finger/palm touches, but cancel idle timer
+        // Finger touches: filter through palm rejection, allow vertical scroll
         if (toolType == MotionEvent.TOOL_TYPE_FINGER) {
             handler.removeCallbacks(idleRunnable)
-            return false
-        }
-
-        // If already in a gutter drag, keep handling as gutter even if pen leaves the area
-        if (isGutterDragging) {
-            return handleGutterTouch(event)
-        }
-
-        // Stylus/mouse in gutter area → scroll drag
-        if (event.x >= width - GUTTER_WIDTH) {
-            return handleGutterTouch(event)
+            return handleFingerTouch(event)
         }
 
         // If an interactive gesture is active, we've disabled the SDK and handle here
@@ -352,7 +351,7 @@ class HandwritingCanvasView @JvmOverloads constructor(
             return handleUndoTouch(event)
         }
 
-        // In tutorial mode, block all writing input but allow gutter (handled above)
+        // In tutorial mode, block all writing input
         if (tutorialMode) return false
 
         // If using Onyx SDK, pen input in the canvas area is handled by SDK callbacks
@@ -374,6 +373,8 @@ class HandwritingCanvasView @JvmOverloads constructor(
 
         when (event.action) {
             MotionEvent.ACTION_DOWN -> {
+                touchFilter?.penActive = true
+                onPenStateChanged?.invoke(true)
                 handler.removeCallbacks(idleRunnable)
                 currentStrokePoints.clear()
                 currentPath.reset()
@@ -412,6 +413,11 @@ class HandwritingCanvasView @JvmOverloads constructor(
                 return true
             }
             MotionEvent.ACTION_UP -> {
+                touchFilter?.let {
+                    it.penActive = false
+                    it.penUpTimestamp = android.os.SystemClock.uptimeMillis()
+                }
+                onPenStateChanged?.invoke(false)
                 if (lineDragActive) {
                     endLineDrag()
                     return true
@@ -440,21 +446,52 @@ class HandwritingCanvasView @JvmOverloads constructor(
         return super.onTouchEvent(event)
     }
 
-    private fun handleGutterTouch(event: MotionEvent): Boolean {
+    /**
+     * Handle filtered finger touches on the canvas. Only vertical scrolling is
+     * allowed — no taps (avoids accidental palm taps).
+     */
+    private fun handleFingerTouch(event: MotionEvent): Boolean {
+        val tf = touchFilter ?: return false
+        val touchMinorDp = event.touchMinor / ScreenMetrics.density
+
         when (event.action) {
             MotionEvent.ACTION_DOWN -> {
-                isGutterDragging = true
-                gutterDragLastY = event.y
-                handler.removeCallbacks(idleRunnable)
+                if (tf.evaluateDown(
+                        pointerCount = event.pointerCount,
+                        touchMinorDp = touchMinorDp,
+                        eventTime = event.eventTime,
+                        x = event.x,
+                        y = event.y,
+                    ) == TouchFilter.Decision.REJECT
+                ) {
+                    fingerScrollActive = false
+                    return false
+                }
+                fingerScrollLastY = event.y
+                fingerScrollActive = true
                 pauseRawDrawing()
                 return true
             }
             MotionEvent.ACTION_MOVE -> {
-                if (!isGutterDragging) return false
-                val dy = gutterDragLastY - event.y  // drag up = positive = scroll down
-                gutterDragLastY = event.y
+                if (!fingerScrollActive) return false
+                if (tf.evaluateMove(
+                        pointerCount = event.pointerCount,
+                        touchMinorDp = touchMinorDp,
+                        eventTime = event.eventTime,
+                        x = event.x,
+                        y = event.y,
+                        checkStationary = true,
+                    ) == TouchFilter.Decision.REJECT
+                ) {
+                    // Cancel this finger gesture
+                    fingerScrollActive = false
+                    if (!tutorialMode) resumeRawDrawing()
+                    return false
+                }
+                if (!tf.hasMovedPastSlop()) return true // wait for intentional drag
+                val dy = fingerScrollLastY - event.y // drag up = scroll down
+                fingerScrollLastY = event.y
                 if (textOverscroll > 0f && dy > 0f) {
-                    // Scrolling back down — reduce text overscroll first
                     textOverscroll = (textOverscroll - dy).coerceAtLeast(0f)
                 } else {
                     val raw = scrollOffsetY + dy
@@ -470,8 +507,8 @@ class HandwritingCanvasView @JvmOverloads constructor(
                 return true
             }
             MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
-                if (!isGutterDragging) return false
-                isGutterDragging = false
+                if (!fingerScrollActive) return false
+                fingerScrollActive = false
                 if (textOverscroll == 0f) {
                     scrollOffsetY = snapToLine(scrollOffsetY)
                 }
@@ -522,7 +559,7 @@ class HandwritingCanvasView @JvmOverloads constructor(
         try {
             val limit = Rect()
             limit.left = 0
-            limit.right = (width - GUTTER_WIDTH).toInt()
+            limit.right = width
             limit.top = (topY - scrollOffsetY).toInt().coerceAtLeast(0)
             limit.bottom = (bottomY - scrollOffsetY).toInt().coerceAtMost(height)
             touchHelper?.setLimitRect(limit, emptyList())
@@ -532,13 +569,12 @@ class HandwritingCanvasView @JvmOverloads constructor(
         }
     }
 
-    /** Restore Onyx SDK drawing area to the full canvas minus gutter. */
+    /** Restore Onyx SDK drawing area to the full canvas. */
     private fun restoreLimitRect() {
         if (!diagramLimitActive || !useOnyxSdk) return
         try {
             val limit = Rect()
             getLocalVisibleRect(limit)
-            limit.right = (limit.right - GUTTER_WIDTH).toInt()
             touchHelper?.setLimitRect(limit, emptyList())
             diagramLimitActive = false
         } catch (e: Exception) {
@@ -878,6 +914,7 @@ class HandwritingCanvasView @JvmOverloads constructor(
 
     /** Common cleanup after any interactive gesture (line-drag or undo scrub). */
     private fun finishInteractiveGesture() {
+        onPenStateChanged?.invoke(false)
         drawToSurface()
         if (useOnyxSdk) {
             try {
@@ -904,7 +941,7 @@ class HandwritingCanvasView @JvmOverloads constructor(
         // Clear background
         canvas.drawColor(Color.WHITE)
 
-        val gutterLeft = width - GUTTER_WIDTH
+        val canvasRight = width.toFloat()
 
         // Apply scroll offset
         canvas.save()
@@ -919,9 +956,9 @@ class HandwritingCanvasView @JvmOverloads constructor(
             val isBottomBorder = diagramAreas.any { lineIdx == it.endLineIndex + 1 }
             val isInterior = diagramAreas.any { lineIdx > it.startLineIndex && lineIdx <= it.endLineIndex }
             if (isTopBorder || isBottomBorder) {
-                canvas.drawLine(0f, lineY, gutterLeft, lineY, diagramBorderPaint)
+                canvas.drawLine(0f, lineY, canvasRight, lineY, diagramBorderPaint)
             } else if (!isInterior) {
-                canvas.drawLine(0f, lineY, gutterLeft, lineY, linePaint)
+                canvas.drawLine(0f, lineY, canvasRight, lineY, linePaint)
             }
             lineY += LINE_SPACING
         }
@@ -942,11 +979,7 @@ class HandwritingCanvasView @JvmOverloads constructor(
 
         canvas.restore()
 
-        // Draw gutter (in screen space)
-        canvas.drawRect(gutterLeft, 0f, width.toFloat(), height.toFloat(), gutterPaint)
-        canvas.drawLine(gutterLeft, 0f, gutterLeft, height.toFloat(), gutterLinePaint)
-
-        // Draw tutorial annotations on top of everything (including gutter)
+        // Draw tutorial annotations on top of everything
         if (annotationStrokes.isNotEmpty() || textAnnotations.isNotEmpty()) {
             canvas.save()
             canvas.translate(0f, -scrollOffsetY)
