@@ -7,9 +7,10 @@ import android.util.Log
 import android.view.WindowInsets
 import android.view.WindowInsetsController
 import android.app.Activity
-import android.widget.LinearLayout
 import android.view.Gravity
 import android.view.LayoutInflater
+import android.view.View
+import android.widget.LinearLayout
 import android.widget.PopupWindow
 import android.widget.Toast
 import androidx.activity.result.contract.ActivityResultContracts
@@ -19,11 +20,14 @@ import androidx.core.view.WindowCompat
 import androidx.lifecycle.lifecycleScope
 import com.writer.R
 import com.writer.model.DocumentModel
-import com.writer.recognition.HandwritingRecognizer
+import com.writer.recognition.TextRecognizer
+import com.writer.recognition.TextRecognizerFactory
 import com.writer.model.DocumentData
 import com.writer.storage.DocumentStorage
 import com.writer.view.HandwritingCanvasView
 import com.writer.view.RecognizedTextView
+import com.writer.view.TouchFilter
+import com.writer.view.ScreenMetrics
 import kotlinx.coroutines.launch
 
 class WritingActivity : AppCompatActivity() {
@@ -39,7 +43,7 @@ class WritingActivity : AppCompatActivity() {
     private lateinit var recognizedTextView: RecognizedTextView
 
     private lateinit var documentModel: DocumentModel
-    private lateinit var recognizer: HandwritingRecognizer
+    private lateinit var recognizer: TextRecognizer
     private var coordinator: WritingCoordinator? = null
     private lateinit var tutorialManager: TutorialManager
 
@@ -59,7 +63,8 @@ class WritingActivity : AppCompatActivity() {
         ActivityResultContracts.StartActivityForResult()
     ) { result ->
         if (result.resultCode == Activity.RESULT_OK) {
-            val name = result.data?.getStringExtra(SaveAsActivity.EXTRA_RESULT_NAME)
+            val rawName = result.data?.getStringExtra(SaveAsActivity.EXTRA_RESULT_NAME)
+            val name = rawName?.let { DocumentStorage.headingToFileName(it) }
             if (!name.isNullOrBlank() && name != currentDocumentName) {
                 val oldName = currentDocumentName
                 currentDocumentName = name
@@ -106,9 +111,14 @@ class WritingActivity : AppCompatActivity() {
 
         inkCanvas = findViewById(R.id.inkCanvas)
         recognizedTextView = findViewById(R.id.recognizedTextView)
+        val splitLayout = findViewById<com.writer.view.SplitLayout>(R.id.splitLayout)
+        val splitDivider = findViewById<View>(R.id.splitDivider)
+
+        val touchFilter = TouchFilter()
+        inkCanvas.touchFilter = touchFilter
+        recognizedTextView.touchFilter = touchFilter
 
         documentModel = DocumentModel()
-        recognizer = HandwritingRecognizer()
 
         tutorialManager = TutorialManager(
             context = this,
@@ -117,7 +127,11 @@ class WritingActivity : AppCompatActivity() {
             getCoordinator = { coordinator },
             getPendingRestore = { pendingRestore },
             clearPendingRestore = { pendingRestore = null },
-            onClosed = { recognizedTextView.onLogoTap = { showMenu() } }
+            onClosed = {
+                recognizedTextView.onLogoTap = { showMenu() }
+                recognizedTextView.onUndoTap = { coordinator?.undo() }
+                recognizedTextView.onRedoTap = { coordinator?.redo() }
+            }
         )
 
         // Migrate old single-file storage if needed, then determine current document
@@ -132,17 +146,58 @@ class WritingActivity : AppCompatActivity() {
         pendingRestore = DocumentStorage.load(this, currentDocumentName)
         restoreDocumentVisuals()
 
+        // Wire pen state from canvas to text view (for floating icon auto-hide)
+        inkCanvas.onPenStateChanged = { active ->
+            recognizedTextView.onPenStateChanged(active)
+        }
+
+        // Text view scroll drives canvas scroll (complementary views)
+        recognizedTextView.onScroll = { dy ->
+            // dy > 0 = finger dragged down = see earlier content = scroll canvas up
+            val raw = inkCanvas.scrollOffsetY - dy
+            inkCanvas.scrollOffsetY = raw.coerceAtLeast(0f)
+            inkCanvas.drawToSurface()
+            inkCanvas.onManualScroll?.invoke()
+        }
+        recognizedTextView.onScrollEnd = {
+            inkCanvas.scrollOffsetY = inkCanvas.snapToLine(inkCanvas.scrollOffsetY)
+            inkCanvas.drawToSurface()
+            inkCanvas.onManualScroll?.invoke()
+        }
+
         // Tap "I" logo to open menu
         recognizedTextView.onLogoTap = { showMenu() }
+        recognizedTextView.onUndoTap = { coordinator?.undo() }
+        recognizedTextView.onRedoTap = { coordinator?.redo() }
+
+        // Pick the best available recognizer synchronously (initialized later in coroutine).
+        // OnyxHwrTextRecognizer binds to a system service using applicationContext, so holding
+        // it in the activity is safe (no activity leak). GoogleMLKitTextRecognizer is stateless
+        // and does not retain a context reference.
+        recognizer = TextRecognizerFactory.create(this)
 
         // Create coordinator early so cached text can be displayed before model loads
         startCoordinator()
 
-        // Capture default heights after initial layout, then wire up the gutter
+        // Capture default heights after initial layout, then wire up the divider drag.
+        // Override the XML weight-based split with an adaptive calculation so that
+        // all supported screen sizes get a proportional canvas/text split.
         recognizedTextView.post {
-            defaultTextHeight = recognizedTextView.height
-            defaultCanvasHeight = inkCanvas.height
-            setupTextGutter()
+            val totalHeight = recognizedTextView.height + inkCanvas.height
+            defaultCanvasHeight = ScreenMetrics.computeDefaultCanvasHeight(totalHeight)
+            defaultTextHeight = totalHeight - defaultCanvasHeight
+
+            val textParams = recognizedTextView.layoutParams as LinearLayout.LayoutParams
+            textParams.height = defaultTextHeight
+            textParams.weight = 0f
+            recognizedTextView.layoutParams = textParams
+
+            val canvasParams = inkCanvas.layoutParams as LinearLayout.LayoutParams
+            canvasParams.height = defaultCanvasHeight
+            canvasParams.weight = 0f
+            inkCanvas.layoutParams = canvasParams
+
+            setupSplitDrag(splitLayout, splitDivider)
 
             // Restore cached text and scroll position immediately (no recognizer needed)
             restoreCoordinatorState()
@@ -197,40 +252,28 @@ class WritingActivity : AppCompatActivity() {
         coordinator?.restoreState(data)
     }
 
-    private fun setupTextGutter() {
-        recognizedTextView.onGutterDrag = { delta ->
+    private fun setupSplitDrag(splitLayout: com.writer.view.SplitLayout, divider: View) {
+        splitLayout.dividerView = divider
+        splitLayout.onSplitDragStart = { inkCanvas.pauseRawDrawing() }
+        splitLayout.onSplitDragEnd = { inkCanvas.resumeRawDrawing() }
+        splitLayout.onSplitDrag = { delta ->
             val totalHeight = defaultTextHeight + defaultCanvasHeight
             val minTextHeight = (totalHeight * 0.25f).toInt()
             val maxOffset = (totalHeight - minTextHeight).toFloat()
-            if (delta > 0f && splitOffset >= maxOffset) {
-                // At max size, dragging down scrolls text content
-                val topPadding = 40f
-                val maxOverscroll = (recognizedTextView.totalTextHeight - recognizedTextView.height + topPadding).coerceAtLeast(0f)
-                inkCanvas.textOverscroll = (inkCanvas.textOverscroll + delta).coerceIn(0f, maxOverscroll)
-                coordinator?.onManualTextScroll()
-            } else if (delta < 0f && inkCanvas.textOverscroll > 0f) {
-                // Dragging back up — reduce overscroll first
-                inkCanvas.textOverscroll = (inkCanvas.textOverscroll + delta).coerceAtLeast(0f)
-                coordinator?.onManualTextScroll()
-            } else {
-                val totalHeight = defaultTextHeight + defaultCanvasHeight
-                val minTextHeight = (totalHeight * 0.25f).toInt()
-                val maxOffset = (totalHeight - minTextHeight).toFloat()
-                splitOffset = (splitOffset + delta).coerceIn(0f, maxOffset)
+            splitOffset = (splitOffset + delta).coerceIn(0f, maxOffset)
 
-                val newTextHeight = defaultTextHeight + splitOffset.toInt()
-                val newCanvasHeight = defaultCanvasHeight - splitOffset.toInt()
+            val newTextHeight = defaultTextHeight + splitOffset.toInt()
+            val newCanvasHeight = defaultCanvasHeight - splitOffset.toInt()
 
-                val textParams = recognizedTextView.layoutParams as LinearLayout.LayoutParams
-                textParams.height = newTextHeight
-                textParams.weight = 0f
-                recognizedTextView.layoutParams = textParams
+            val textParams = recognizedTextView.layoutParams as LinearLayout.LayoutParams
+            textParams.height = newTextHeight
+            textParams.weight = 0f
+            recognizedTextView.layoutParams = textParams
 
-                val canvasParams = inkCanvas.layoutParams as LinearLayout.LayoutParams
-                canvasParams.height = newCanvasHeight.coerceAtLeast(0)
-                canvasParams.weight = 0f
-                inkCanvas.layoutParams = canvasParams
-            }
+            val canvasParams = inkCanvas.layoutParams as LinearLayout.LayoutParams
+            canvasParams.height = newCanvasHeight.coerceAtLeast(0)
+            canvasParams.weight = 0f
+            inkCanvas.layoutParams = canvasParams
         }
     }
 
@@ -249,6 +292,7 @@ class WritingActivity : AppCompatActivity() {
         )
         coordinator?.onHeadingDetected = { heading -> autoRenameFromHeading(heading) }
         coordinator?.start()
+
     }
 
     private fun autoRenameFromHeading(heading: String) {
@@ -454,6 +498,10 @@ class WritingActivity : AppCompatActivity() {
             popup.dismiss()
             tutorialManager.show()
         }
+        popupView.findViewById<android.view.View>(R.id.menuBugReport).setOnClickListener {
+            popup.dismiss()
+            generateAndShareBugReport()
+        }
         popupView.findViewById<android.view.View>(R.id.menuClose).setOnClickListener {
             popup.dismiss()
             saveDocument()
@@ -465,11 +513,10 @@ class WritingActivity : AppCompatActivity() {
             Toast.makeText(this, "Tutorial reset — will show on next launch", Toast.LENGTH_SHORT).show()
         }
 
-        // Position to the left of the gutter, at the top of the text view
-        val gutterWidth = HandwritingCanvasView.GUTTER_WIDTH.toInt()
+        // Position to the left of the floating icon, at the top of the text view
         val loc = IntArray(2)
         recognizedTextView.getLocationOnScreen(loc)
-        val x = loc[0] + recognizedTextView.width - gutterWidth - popupWidth
+        val x = loc[0] + recognizedTextView.width - popupWidth
         val y = loc[1]
         popup.showAtLocation(recognizedTextView, Gravity.NO_GRAVITY, x, y)
     }
@@ -501,6 +548,34 @@ class WritingActivity : AppCompatActivity() {
             DocumentStorage.exportToSyncFolder(
                 this, currentDocumentName, state, markdown, Uri.parse(syncUri)
             )
+        }
+    }
+
+    // --- Bug report ---
+
+    private fun generateAndShareBugReport() {
+        val file = coordinator?.generateBugReport()
+        if (file == null) {
+            Toast.makeText(this, "No strokes to report", Toast.LENGTH_SHORT).show()
+            return
+        }
+
+        Toast.makeText(this, "Bug report saved", Toast.LENGTH_SHORT).show()
+
+        try {
+            val uri = androidx.core.content.FileProvider.getUriForFile(
+                this, "$packageName.fileprovider", file
+            )
+            val intent = Intent(Intent.ACTION_SEND).apply {
+                type = "application/json"
+                putExtra(Intent.EXTRA_STREAM, uri)
+                putExtra(Intent.EXTRA_SUBJECT, "InkUp Bug Report")
+                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            }
+            startActivity(Intent.createChooser(intent, "Share Bug Report"))
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to share bug report: ${e.message}")
+            Toast.makeText(this, "Report saved to ${file.absolutePath}", Toast.LENGTH_LONG).show()
         }
     }
 

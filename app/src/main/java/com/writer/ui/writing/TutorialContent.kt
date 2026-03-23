@@ -30,17 +30,16 @@ data class TutorialData(
     val annotations: List<AnnotationStroke>,
     val textAnnotations: List<TextAnnotation>,
     val scrollOffsetY: Float,
-    val textParagraphs: List<List<WritingCoordinator.TextSegment>>,
+    val textParagraphs: List<List<TextSegment>>,
     val canvasContentHeight: Float = 0f,
     val diagramAreas: List<DiagramArea> = emptyList(),
-    val diagramDisplays: List<WritingCoordinator.DiagramDisplay> = emptyList()
+    val diagramDisplays: List<DiagramDisplay> = emptyList()
 )
 
 object TutorialContent {
 
     private val LINE_SPACING = HandwritingCanvasView.LINE_SPACING
     private val TOP_MARGIN = HandwritingCanvasView.TOP_MARGIN
-    private val GUTTER_WIDTH get() = HandwritingCanvasView.GUTTER_WIDTH
 
     private val textPaint = Paint().apply {
         typeface = Typeface.create("cursive", Typeface.NORMAL)
@@ -48,7 +47,7 @@ object TutorialContent {
     }
 
     fun generate(canvasWidth: Int, canvasHeight: Int): TutorialData {
-        val writingWidth = canvasWidth - GUTTER_WIDTH
+        val writingWidth = canvasWidth.toFloat()
 
         val strokes = mutableListOf<InkStroke>()
         val annotations = mutableListOf<AnnotationStroke>()
@@ -103,15 +102,10 @@ object TutorialContent {
             TextAnnotation("Strike through to delete words", 700f, strikeY + 10f, red, 32f)
         )
 
-        // --- Gutter scroll hint (top line, matching resize arrow style) ---
+        // --- Finger scroll hint ---
         val scrollHintY = lineTop(0) + LINE_SPACING * 0.4f
-        val scrollHintRight = writingWidth - 20f
-        val scrollHintLeft = writingWidth - 370f
-        annotations.add(makeLine(scrollHintLeft, scrollHintY, scrollHintRight, scrollHintY, blue, 4f))
-        annotations.add(makeLine(scrollHintRight - 20f, scrollHintY - 12f, scrollHintRight, scrollHintY, blue, 4f))
-        annotations.add(makeLine(scrollHintRight - 20f, scrollHintY + 12f, scrollHintRight, scrollHintY, blue, 4f))
         textAnnotations.add(
-            TextAnnotation("Drag this gutter to scroll", scrollHintLeft.toFloat() - 10f, scrollHintY - 21f, blue, 34f)
+            TextAnnotation("Scroll with your finger", writingWidth - 200f, scrollHintY, blue, 34f)
         )
 
         // --- Insert/delete line demo (right of eggs/bread area, +100px right) ---
@@ -251,22 +245,22 @@ object TutorialContent {
         // --- Text paragraphs for the text view ---
         val textParagraphs = listOf(
             listOf(
-                WritingCoordinator.TextSegment("Shopping List", dimmed = false, lineIndex = 0, heading = true)
+                TextSegment("Shopping List", dimmed = false, lineIndex = 0, heading = true)
             ),
             listOf(
-                WritingCoordinator.TextSegment("Eggs", dimmed = false, lineIndex = 1, listItem = true)
+                TextSegment("Eggs", dimmed = false, lineIndex = 1, listItem = true)
             ),
             listOf(
-                WritingCoordinator.TextSegment("Bread", dimmed = false, lineIndex = 2, listItem = true)
+                TextSegment("Bread", dimmed = false, lineIndex = 2, listItem = true)
             ),
             listOf(
-                WritingCoordinator.TextSegment("The quick brown fox", dimmed = false, lineIndex = 3),
-                WritingCoordinator.TextSegment("jumps over the dog", dimmed = false, lineIndex = 4)
+                TextSegment("The quick brown fox", dimmed = false, lineIndex = 3),
+                TextSegment("jumps over the dog", dimmed = false, lineIndex = 4)
             )
         )
 
         // Diagram display for the text view (smiley rendered inline)
-        val diagramDisplay = WritingCoordinator.DiagramDisplay(
+        val diagramDisplay = DiagramDisplay(
             startLineIndex = 6,
             strokes = smileyStrokes,
             canvasWidth = writingWidth.toFloat(),
